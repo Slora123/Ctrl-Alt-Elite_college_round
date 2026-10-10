@@ -1,8 +1,17 @@
 import pytest
 
 from crisisgrid_core.graph import (
-    GraphError, GraphValidationError, NodeEdit, canonicalize, compute_hashes, create_version, diff, downstream,
-    hash_node, normalize_source, validate,
+    GraphError,
+    GraphValidationError,
+    NodeEdit,
+    canonicalize,
+    compute_hashes,
+    create_version,
+    diff,
+    downstream,
+    hash_node,
+    normalize_source,
+    validate,
 )
 from crisisgrid_core.models import ExperimentGraph, GraphNode, Source
 

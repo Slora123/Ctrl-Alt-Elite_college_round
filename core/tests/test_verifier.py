@@ -136,3 +136,8 @@ def test_partial_missing_metric_still_uses_the_rest():
 def test_uuid7():
     a, b = uuid7(), uuid7()
     assert a != b and a[14] == "7" and a[19] in "89ab" and len(a) == 36
+
+
+def test_uuid7_is_strictly_increasing_even_within_a_millisecond():
+    ids = [uuid7() for _ in range(20000)]
+    assert ids == sorted(ids) and len(set(ids)) == len(ids)

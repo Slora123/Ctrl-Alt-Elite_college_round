@@ -19,3 +19,16 @@ packages = ["crisisgrid_core"]
 testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 140
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["crisisgrid_core"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true

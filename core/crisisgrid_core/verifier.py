@@ -6,9 +6,10 @@ silently dropped: a caller that hands over interactive runs has a bug we want to
 from __future__ import annotations
 
 import statistics
-from typing import Sequence
+from collections.abc import Sequence
+from typing import Any
 
-from .models import Claim, RunResult, Verdict
+from .models import Claim, RunResult, Verdict, VerdictStatus
 
 __all__ = ["verify_claim", "IneligibleRunError", "MIN_SEEDS"]
 
@@ -34,10 +35,12 @@ def verify_claim(claim: Claim, runs: Sequence[RunResult], *, metric_mismatch: st
             )
 
     caveats: list[str] = []
-    base = dict(claim_id=claim.id, reported=claim.reported_value)
+
+    def verdict(status: VerdictStatus, **kw: Any) -> Verdict:
+        return Verdict(claim_id=claim.id, reported=claim.reported_value, status=status, **kw)
 
     if not runs:
-        return Verdict(status="not_executed", caveats=["no clean run was attempted"], **base)
+        return verdict("not_executed", caveats=["no clean run was attempted"])
 
     infra = [r for r in runs if r.status == "infra_failed"]
     failed = [r for r in runs if r.status in ("failed", "timeout")]
@@ -47,14 +50,14 @@ def verify_claim(claim: Claim, runs: Sequence[RunResult], *, metric_mismatch: st
         caveats.append(f"{len(failed)} run(s) failed or timed out and are not counted as measurements")
 
     if metric_mismatch:
-        return Verdict(status="inconclusive", caveats=[*caveats, f"metric definition mismatch: {metric_mismatch}"], **base)
+        return verdict("inconclusive", caveats=[*caveats, f"metric definition mismatch: {metric_mismatch}"])
 
     used = [r for r in runs if r.status in _USED and claim.metric in r.metrics]
     missing = [r for r in runs if r.status in _USED and claim.metric not in r.metrics]
     if missing:
         caveats.append(f"{len(missing)} run(s) did not report metric '{claim.metric}'")
     if not used:
-        return Verdict(status="inconclusive", caveats=[*caveats, "no usable measurement"], **base)
+        return verdict("inconclusive", caveats=[*caveats, "no usable measurement"])
 
     values = [r.metrics[claim.metric] for r in used]
     n = len(values)
@@ -62,6 +65,7 @@ def verify_claim(claim: Claim, runs: Sequence[RunResult], *, metric_mismatch: st
     std = statistics.stdev(values) if n > 1 else None
     delta = mean - claim.reported_value
 
+    status: VerdictStatus
     if abs(delta) <= claim.tolerance:
         status = "reproduced"
     elif std is not None and abs(delta) <= claim.tolerance + 2 * std:
@@ -83,5 +87,5 @@ def verify_claim(claim: Claim, runs: Sequence[RunResult], *, metric_mismatch: st
     if n < MIN_SEEDS:
         caveats.append(f"few seeds (n={n} < {MIN_SEEDS})")
 
-    return Verdict(status=status, measured_mean=mean, measured_std=std, delta=delta, n_seeds=n,
-                   evidence_run_ids=[r.run_id for r in used], caveats=caveats, **base)
+    return verdict(status, measured_mean=mean, measured_std=std, delta=delta, n_seeds=n,
+                   evidence_run_ids=[r.run_id for r in used], caveats=caveats)
