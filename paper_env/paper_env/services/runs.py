@@ -32,6 +32,7 @@ class _Plan:
     stop_on_fail: bool
     cell_timeout: float | None
     deadline: float  # monotonic
+    run_timeout: float = 0.0
     crs: list[CellRun] = field(default_factory=list)
 
 
@@ -69,6 +70,42 @@ class RunService:
         run = self._execute_plan(run, [cell_id], stop_on_fail=True, cell_timeout=timeout)
         self.notebook.mark_downstream_stale(cell_id)
         return run
+
+    def run_until(self, cell_id: str, *, seed: int | None = None, cell_timeout: float | None = None,
+                  run_timeout: float | None = None, stop_on_fail: bool = True) -> Run:
+        """Top to bottom in the live kernel, up to and including ``cell_id``. Later cells become stale."""
+        target = self.notebook.get_cell(cell_id)
+        ids = [c.id for c in self.notebook.list_cells(target.paper_env_id) if c.position <= target.position]
+        run = self._begin(target.paper_env_id, RunMode.UNTIL, seed, fresh_kernel=False, run_timeout=run_timeout)
+        if run.status != RunStatus.RUNNING:
+            return run
+        run = self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout)
+        self.notebook.mark_downstream_stale(cell_id)
+        return run
+
+    def run_all(self, paper_env_id: str, *, stop_on_fail: bool = True, seed: int | None = None,
+                cell_timeout: float | None = None, run_timeout: float | None = None) -> Run:
+        """Every cell in order in the live kernel. With ``stop_on_fail`` the rest become ``skipped``."""
+        run = self._begin(paper_env_id, RunMode.ALL, seed, fresh_kernel=False, run_timeout=run_timeout)
+        if run.status != RunStatus.RUNNING:
+            return run
+        ids = [c.id for c in self.notebook.list_cells(paper_env_id)]
+        return self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout)
+
+    def run_clean(self, paper_env_id: str, *, stop_on_fail: bool = True, seed: int | None = None,
+                  cell_timeout: float | None = None, run_timeout: float | None = None) -> Run:
+        """Always a brand-new kernel, fixed seed, top to bottom. The ONLY mode that can be
+        ``verification_eligible`` (and only if it ran to a real conclusion)."""
+        run = self._begin(paper_env_id, RunMode.CLEAN, seed, fresh_kernel=True, verification_eligible=True)
+        if run.status != RunStatus.RUNNING:
+            return run
+        ids = [c.id for c in self.notebook.list_cells(paper_env_id)]
+        return self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout)
+
+    def interrupt(self, run_id: str) -> bool:
+        """Interrupt whatever the run is executing; the run ends ``cancelled`` and the rest is skipped."""
+        run = self.get_run(run_id)
+        return self.runner.interrupt(run.paper_env_id)
 
     # ------------------------------------------------------------------ run lifecycle
     def _begin(self, paper_env_id: str, mode: RunMode, seed: int | None, *, fresh_kernel: bool,
@@ -136,6 +173,8 @@ class RunService:
                 extra: dict[str, Any] | None = None) -> Run:
         run.status, run.failure_kind, run.message = status, kind, message
         run.finished_at = utcnow()
+        if status in (RunStatus.INFRA_FAILED, RunStatus.CANCELLED, RunStatus.TIMED_OUT, RunStatus.BLOCKED):
+            run.verification_eligible = False  # incomplete runs cannot back a verification
         with self._uow() as u:
             u.runs.update_run(run)
         if self.datasets is not None:
@@ -157,16 +196,18 @@ class RunService:
         return cr
 
     def _execute_plan(self, run: Run, cell_ids: list[str], *, stop_on_fail: bool, cell_timeout: float | None,
-                      plan: _Plan | None = None) -> Run:
-        plan = plan or _Plan(cell_ids, 0, stop_on_fail, cell_timeout,
-                             time.monotonic() + self.settings.run_timeout_s)
+                      run_timeout: float | None = None, plan: _Plan | None = None) -> Run:
+        total = run_timeout if run_timeout is not None else self.settings.run_timeout_s
+        plan = plan or _Plan(cell_ids, 0, stop_on_fail, cell_timeout, time.monotonic() + total, total)
         while plan.next_index < len(plan.cell_ids):
             cid = plan.cell_ids[plan.next_index]
             remaining = plan.deadline - time.monotonic()
             if remaining <= 0:
                 return self._abort_rest(run, plan, RunStatus.TIMED_OUT, None,
-                                        f"run exceeded its {self.settings.run_timeout_s:g}s total runtime limit")
-            timeout = min(plan.cell_timeout or self.settings.cell_timeout_s, remaining)
+                                        f"run exceeded its {plan.run_timeout:g}s total runtime limit")
+            wanted = plan.cell_timeout or self.settings.cell_timeout_s
+            timeout = min(wanted, remaining)
+            clipped = remaining < wanted  # the run's total budget, not the cell's own limit, set this timeout
             cr = self.runner.execute_cell(run, cid, timeout=timeout)
             plan.next_index += 1
             plan.crs.append(cr)
@@ -180,6 +221,9 @@ class RunService:
                 if cr.failure_kind == FailureKind.INFRASTRUCTURE:
                     return self._abort_rest(run, plan, RunStatus.INFRA_FAILED, FailureKind.INFRASTRUCTURE,
                                             f"infrastructure failure: {cr.error.message}")
+                if clipped and cr.error and cr.error.type == "CellTimeout":
+                    return self._abort_rest(run, plan, RunStatus.TIMED_OUT, None,
+                                            f"run exceeded its {plan.run_timeout:g}s total runtime limit during cell {cid}")
                 if cr.error and cr.error.type == "Interrupted":
                     return self._abort_rest(run, plan, RunStatus.CANCELLED, None, "interrupted by user")
                 if plan.stop_on_fail:
@@ -242,4 +286,4 @@ class RunService:
                 return self._abort_rest(run, plan, RunStatus.INFRA_FAILED, FailureKind.INFRASTRUCTURE, cr.error.message)
             if plan.stop_on_fail:
                 return self._abort_rest(run, plan, RunStatus.FAILED, FailureKind.EXPERIMENT, "resumed cell failed", cr.cell_id)
-        return self._execute_plan(run, plan.cell_ids, stop_on_fail=plan.stop_on_fail, cell_timeout=plan.cell_timeout, plan=plan)
+        return self._execute_plan(run, plan.cell_ids, stop_on_fail=plan.stop_on_fail, cell_timeout=plan.cell_timeout, run_timeout=plan.run_timeout, plan=plan)
