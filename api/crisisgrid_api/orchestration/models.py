@@ -43,6 +43,21 @@ class PaperRecord(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class AgentEdit(BaseModel):
+    """A versioned change to a notebook cell. History is never rewritten: a revert would be a new edit."""
+
+    id: str = Field(default_factory=new_id)
+    cell_index: int
+    old: str
+    new: str
+    author: Literal["agent", "human"] = "agent"
+    reason: str = ""
+    diff: str = ""
+    risk_class: str = "safe"
+    approved_by: Literal["policy", "human"] = "policy"
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 RunStatus = Literal["running", "waiting_gate", "waiting_jobs", "completed", "failed"]
 
 
@@ -69,6 +84,9 @@ class RunState(BaseModel):
     job_ids: list[str] = Field(default_factory=list)
     run_results: list[RunResult] = Field(default_factory=list)
     verdicts: list[Verdict] = Field(default_factory=list)
+    edits: list[AgentEdit] = Field(default_factory=list)  # applied cell edits, oldest first
+    pending_edit: AgentEdit | None = None  # proposed, waiting for an `action` gate answer
+    diagnoses: list[dict[str, Any]] = Field(default_factory=list)
     execution: Literal["not_run", "clean_runs"] = "not_run"
     report: str | None = None
     created_at: datetime = Field(default_factory=utcnow)

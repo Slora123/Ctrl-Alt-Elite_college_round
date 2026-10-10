@@ -8,12 +8,14 @@ Nodes after Route that need compute (Environment, Execute, Diagnose, Verify, Att
 """
 from __future__ import annotations
 
+import difflib
 import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from crisisgrid_core.action_hook import Action, ActionHook
 from crisisgrid_core.harness import EscalationRequired, HarnessConfig, HarnessGuard
 from crisisgrid_core.jobs import JobSpec
 from crisisgrid_core.models import RunResult, utcnow
@@ -24,6 +26,7 @@ from ..agents.artifact_finder import RepoFetcher, find_artifacts
 from ..agents.gap_auditor import GapAuditorAgent
 from ..agents.paper_parser import PaperParserAgent
 from ..agents.report_writer import ReportWriterAgent
+from ..agents.run_diagnoser import RunDiagnoserAgent
 from ..gateway.gateway import Gateway
 from ..gateway.types import AllProvidersFailed
 from ..ingest.embed import Embedder
@@ -31,7 +34,7 @@ from ..ingest.pdf import IngestedPaper, PdfError, ingest_pdf
 from ..jobs.service import JobService
 from ..repos.interfaces import EventStore, PaperRepo, RunEvent, RunRepo
 from .gates import GateError, GateManager
-from .models import Gate, GateKind, RunState
+from .models import AgentEdit, Gate, GateKind, RunState
 from .report import build_report
 
 log = logging.getLogger("crisisgrid.pipeline")
@@ -61,6 +64,7 @@ class PipelineDeps:
     guard_config: HarnessConfig = field(default_factory=HarnessConfig)
     jobs: JobService | None = None  # None: no execution (Tier 1 only)
     narrative: bool = False  # ask the Report writer for a short summary (one extra model call)
+    repair: bool = False  # diagnose failed clean runs and propose fixes; off: a failed run goes straight to a human
 
 
 class Orchestrator:
@@ -164,8 +168,8 @@ class Orchestrator:
         payload = payload or {}
         if gate.kind == "stuck" and action == "edit_code":
             raise GateError("edit_code is only available during execution stages (not built yet)")
-        if gate.kind == "action":
-            raise GateError("action gates are created by the Action hook (not built yet)")
+        if gate.kind == "action" and action == "edit" and not (isinstance(payload.get("source"), str) and payload["source"].strip()):
+            raise GateError("answer 'edit' needs payload.source: the replacement source of the cell")  # validated BEFORE resolving
         resolved = self.d.gates.respond(gate_id, action, payload)
         self._apply(state, resolved, payload)
         state.waiting_gate_id = None
@@ -194,14 +198,27 @@ class Orchestrator:
             if a == "retry_with_hint":
                 state.hints[node] = str(payload.get("hint", ""))
                 state.error = None
-                if node == "execute":
-                    state.job_ids = []  # a retry enqueues fresh jobs
+                if node in ("execute", "diagnose"):
+                    state.job_ids, state.node = [], "execute"  # a retry enqueues fresh jobs
             elif a == "skip_stage":
                 state.caveats.append(f"Stage '{node}' was skipped by the user after a failure ({state.error}); results are incomplete.")
                 state.error = None
                 state.node = SKIP_NEXT.get(node, "report")
             elif a == "abort":
                 self._fail(state, "aborted by the user")
+        elif gate.kind == "action":
+            pending = state.pending_edit
+            if pending is None:
+                self._fail(state, "action gate answered but no edit is pending")
+            elif a == "reject":
+                state.pending_edit = None
+                state.caveats.append(f"A proposed repair of cell {pending.cell_index} was rejected; the run ended without results.")
+                state.node = "report"
+            else:
+                if a == "edit":
+                    pending = self._edit(state, pending.cell_index, str(payload["source"]), "human",
+                                         "rewritten by a reviewer instead of the proposed fix")
+                self._apply_edit(state, pending.model_copy(update={"approved_by": "human"}))
         elif gate.kind == "final":
             if a == "accept":
                 state.node = "end"
@@ -302,6 +319,8 @@ class Orchestrator:
                     state.caveats.append(msg)
         state.run_results, state.execution = results, "clean_runs"
         if not any(r.status in ("ok", "scaled_down") for r in results):
+            if self.d.repair and any(j.status == "failed" and (j.result or {}).get("error") for j in done):
+                return "diagnose"
             errs = "; ".join(sorted({j.error or j.status for j in done}))[:300]
             raise EscalationRequired(f"no clean run produced a result ({errs})")
         return "verify"
@@ -313,10 +332,63 @@ class Orchestrator:
             mismatch = "substitute data was used: this is not a reproduction of the paper's setting"
         if state.route and state.route.case == 3:
             state.caveats.append("The executed notebook is not the authors' code (Tier 3): results are directional only.")
+        agent_edits = [e for e in state.edits if e.author == "agent"]
+        if agent_edits:
+            state.caveats.append(f"{len(agent_edits)} agent-authored edit(s) were applied to get the notebook to run; see the deviations.")
         state.verdicts = [verify_claim(c, state.run_results, metric_mismatch=mismatch) for c in state.parsed.claims]
         for v in state.verdicts:
             self._emit(state.run_id, "verdict_ready", v.model_dump(mode="json"))
         return "report"
+
+    def _edit(self, state: RunState, i: int, new: str, author: str, reason: str, risk: str = "experiment_changing") -> AgentEdit:
+        assert state.notebook is not None
+        old = state.notebook[i]["source"]
+        diff = "\n".join(difflib.unified_diff(old.splitlines(), new.splitlines(), f"cell {i} (before)", f"cell {i} (after)", lineterm=""))
+        return AgentEdit(cell_index=i, old=old, new=new, author=author, reason=reason, diff=diff, risk_class=risk)  # type: ignore[arg-type]
+
+    def _apply_edit(self, state: RunState, edit: AgentEdit) -> None:
+        assert state.notebook is not None
+        state.notebook[edit.cell_index] = {**state.notebook[edit.cell_index], "source": edit.new}
+        state.edits.append(edit)
+        state.pending_edit, state.job_ids, state.node = None, [], "execute"
+        self._emit(state.run_id, "edit_applied", {"edit_id": edit.id, "cell_index": edit.cell_index, "author": edit.author,
+                                                   "approved_by": edit.approved_by, "risk_class": edit.risk_class, "diff": edit.diff})
+
+    def _node_diagnose(self, state: RunState, guard: HarnessGuard) -> Step:
+        """A clean run failed in user code. Diagnose, then act only as far as the Action hook allows."""
+        jobs = self.d.jobs
+        assert jobs is not None and state.notebook
+        candidates = [jobs.repo.get_job(i) for i in state.job_ids]
+        failed = next((j for j in candidates if j and j.status == "failed" and (j.result or {}).get("error")), None)
+        assert failed is not None and failed.result is not None
+        err = failed.result["error"]
+        step = guard.record_attempt("repair", "diagnose", f"{err.get('type')}: {err.get('message')}")
+        if not step.ok:  # the same failure after a repair means the repair did not work
+            raise EscalationRequired(f"repair gave up: {step.reason}")
+        diag = RunDiagnoserAgent(self.d.gateway, guard).diagnose(err, state.notebook, run_id=state.run_id, hint=state.hints.get("diagnose"))
+        state.diagnoses.append(diag.model_dump(mode="json"))
+        self._emit(state.run_id, "diagnosis", {"category": diag.category, "explanation": diag.explanation, "has_fix": diag.fix is not None})
+        why = f"diagnosis [{diag.category}]: {diag.explanation}"
+        if diag.category == "infra":
+            state.job_ids, state.status = [], "running"
+            return "execute"  # retried, not patched
+        if diag.install:
+            why += f" (needs packages {', '.join(diag.install)}; install them on the worker, then retry)"
+        if diag.needs_human or diag.fix is None:
+            raise EscalationRequired(why)
+        i, new = diag.fix.cell_index, diag.fix.new_source
+        old = state.notebook[i]["source"]
+        action = Action(kind="edit", author="agent", target=f"cell {i}", payload={"old": old, "new": new})
+        decision = ActionHook(guard).check(action, "repair")
+        edit = self._edit(state, i, new, "agent", diag.explanation, decision.risk_class)
+        if decision.decision == "allow":
+            self._apply_edit(state, edit.model_copy(update={"approved_by": "policy"}))
+            return "execute"
+        if decision.decision == "needs_approval":
+            state.pending_edit = edit
+            return GateRequest("action", {"cell_index": i, "diagnosis": diag.model_dump(mode="json"), "diff": edit.diff,
+                                          "risk_class": decision.risk_class, "reason": decision.reason, "error": err})
+        raise EscalationRequired(f"the Action hook denied the proposed repair: {decision.reason}")
 
     def on_job_finished(self, run_id: str) -> None:
         """Called when any job of a run ends (HTTP completion, reaper, cancel). Continues the run once ALL its jobs are done."""

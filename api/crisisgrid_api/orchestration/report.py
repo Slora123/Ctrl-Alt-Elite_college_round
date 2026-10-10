@@ -2,13 +2,16 @@
 The full evidence report (attribution, agent-edit deviations, PDF export) is P8."""
 from __future__ import annotations
 
-from crisisgrid_core.report_check import render_deviations
+from crisisgrid_core.report_check import Deviation, render_deviations
 
 from .models import RunState
 
 
 def build_report(state: RunState, summary: str | None = None) -> str:
     ran = state.execution == "clean_runs"
+    devs = [Deviation(cell_id=f"cell {e.cell_index}", author="agent", summary=e.reason or "edited", diff=e.diff)
+            for e in state.edits if e.author == "agent"]
+    reviewed = [e for e in state.edits if e.author == "human"]
     title = f"Tier {state.route.tier}" if ran and state.route else "Tier 1: static audit only"
     L: list[str] = [f"# CrisisGrid report ({title})", ""]
     if summary:
@@ -46,7 +49,9 @@ def build_report(state: RunState, summary: str | None = None) -> str:
         if inv.missing_components:
             L.append(f"- Missing: {', '.join(inv.missing_components)}")
     if ran:
-        L += ["", "## Deviations from the paper", "", render_deviations([])]  # nothing in the pipeline edits code yet (repair loop: P7)
+        L += ["", "## Deviations from the paper", "", render_deviations(devs)]
+        if reviewed:
+            L += ["", f"{len(reviewed)} cell edit(s) were written by a human reviewer."]
     L += ["", "## Limits of this report", ""]
     if ran:
         L.append(f"- {len(state.run_results)} clean run(s) (fresh process, fixed seed, top to bottom) were executed; "
