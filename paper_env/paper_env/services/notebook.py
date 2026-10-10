@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import difflib
 
+import re
+
 from ..domain import (
-    Author, Cell, CellStatus, CellVersion, EventType, content_hash,
+    Author, Cell, CellStatus, CellType, CellVersion, EventType, content_hash,
 )
 from ..events import EventBus
 from ..kernel.static import analyze_cell
@@ -31,7 +33,7 @@ class NotebookService:
     def add_cell(self, paper_env_id: str, source: str, author: Author = Author.HUMAN, *,
                  position: int | None = None, declared_inputs: list[str] | None = None,
                  declared_outputs: list[str] | None = None, node_id: str | None = None,
-                 source_span: dict | None = None) -> Cell:
+                 source_span: dict | None = None, cell_type: CellType = "code") -> Cell:
         with self._uow() as u:
             env = u.paper_envs.get(paper_env_id)
             cells = u.cells.list_cells(paper_env_id)
@@ -43,9 +45,11 @@ class NotebookService:
                 u.cells.update_cell(c)
             env.current_notebook_version += 1
             u.paper_envs.update(env)
+            is_code = cell_type == "code"
             cell = Cell(paper_env_id=paper_env_id, position=pos, node_id=node_id, source_span=source_span,
-                        declared_inputs=declared_inputs or [], declared_outputs=declared_outputs or [])
-            cell.input_warnings = analyze_cell(source, cell.declared_inputs)
+                        cell_type=cell_type, declared_inputs=(declared_inputs or []) if is_code else [],
+                        declared_outputs=(declared_outputs or []) if is_code else [])
+            cell.input_warnings = analyze_cell(source, cell.declared_inputs) if is_code else []
             ver = CellVersion(cell_id=cell.id, source=source, author=author, content_hash=content_hash(source),
                               notebook_version=env.current_notebook_version)
             cell.current_version_id = ver.id
@@ -53,7 +57,7 @@ class NotebookService:
             u.cells.add_version(ver)
             ev = self.bus.append(u, EventType.CELL_EDITED, {
                 "change": "created", "cell_id": cell.id, "cell_version_id": ver.id, "author": author.value,
-                "position": pos, "notebook_version": env.current_notebook_version}, paper_env_id=paper_env_id)
+                "position": pos, "cell_type": cell_type, "notebook_version": env.current_notebook_version}, paper_env_id=paper_env_id)
         self.bus.dispatch(ev)
         return cell
 
@@ -84,6 +88,8 @@ class NotebookService:
                 c.declared_inputs = declared_inputs
             if declared_outputs is not None:
                 c.declared_outputs = declared_outputs
+            if c.cell_type != "code":
+                raise ValueError("markdown cells have no declared inputs or outputs")
             c.input_warnings = analyze_cell(u.cells.get_version(c.current_version_id).source, c.declared_inputs)
             u.cells.update_cell(c)
             return c
@@ -128,9 +134,10 @@ class NotebookService:
                               notebook_version=env.current_notebook_version)
             u.cells.add_version(ver)
             cell.current_version_id = ver.id
-            cell.input_warnings = analyze_cell(new_source, cell.declared_inputs)
+            cell.input_warnings = analyze_cell(new_source, cell.declared_inputs) if cell.cell_type == "code" else []
             u.cells.update_cell(cell)
-            stale = self._mark_stale(u, cell.paper_env_id, cell.position, include_self=True)
+            # editing documentation (markdown) changes no results, so nothing goes stale
+            stale = self._mark_stale(u, cell.paper_env_id, cell.position, include_self=True) if cell.cell_type == "code" else []
             ev = self.bus.append(u, EventType.CELL_EDITED, {
                 "change": "reverted" if _reverted_from else "edited", "cell_id": cell_id, "cell_version_id": ver.id,
                 "parent_version_id": prev.id, "author": author.value, "diff": ver.diff,
@@ -144,6 +151,47 @@ class NotebookService:
         with self._uow() as u:
             target = u.cells.get_version(cell_version_id)
         return self.apply_edit(target.cell_id, target.source, author, _reverted_from=cell_version_id)
+
+    # ------------------------------------------------------------------ find & replace
+    def find(self, paper_env_id: str, pattern: str, *, regex: bool = False, case: bool = False,
+             limit: int = 500) -> list[dict]:
+        """Matches across all cells (code and markdown): [{cell_id, position, line, column, text}]."""
+        rx = self._compile(pattern, regex, case)
+        out = []
+        with self._uow() as u:
+            for c in u.cells.list_cells(paper_env_id):
+                src = u.cells.get_version(c.current_version_id).source
+                for i, line in enumerate(src.splitlines()):
+                    for m in rx.finditer(line):
+                        out.append({"cell_id": c.id, "position": c.position, "line": i + 1, "column": m.start(),
+                                    "text": line.strip()[:200]})
+                        if len(out) >= limit:
+                            return out
+        return out
+
+    def replace_all(self, paper_env_id: str, pattern: str, replacement: str, author: Author, *, regex: bool = False,
+                    case: bool = False, cell_ids: list[str] | None = None) -> list[dict]:
+        """Replace in every matching cell through ``apply_edit`` (so each change is a versioned edit with an author)."""
+        rx = self._compile(pattern, regex, case)
+        changed = []
+        for c in self.list_cells(paper_env_id):
+            if cell_ids is not None and c.id not in cell_ids:
+                continue
+            src = self.source_of(c.id)
+            new, n = rx.subn(replacement if regex else replacement.replace("\\", "\\\\"), src)
+            if n and new != src:
+                ver = self.apply_edit(c.id, new, author)
+                changed.append({"cell_id": c.id, "replacements": n, "cell_version_id": ver.id})
+        return changed
+
+    @staticmethod
+    def _compile(pattern: str, regex: bool, case: bool) -> "re.Pattern[str]":
+        if not pattern:
+            raise ValueError("search pattern is empty")
+        try:
+            return re.compile(pattern if regex else re.escape(pattern), 0 if case else re.IGNORECASE)
+        except re.error as e:
+            raise ValueError(f"invalid regular expression: {e}") from e
 
     # ------------------------------------------------------------------ staleness
     def _mark_stale(self, u: UnitOfWork, paper_env_id: str, from_position: int, include_self: bool) -> list[str]:

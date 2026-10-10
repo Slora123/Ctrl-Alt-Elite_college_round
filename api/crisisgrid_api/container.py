@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from sqlalchemy import Engine
 
 from .agents.artifact_finder import GitHubFetcher, RepoFetcher
+from .auth.deps import AuthDeps, build_deps
+from .auth.service import AuthService, resolve_secret
+from .db.auth_repo import SqlAuthRepo
 from .config import Settings
 from .db.base import make_session_factory
 from .db.event_store import SqlEventStore
@@ -30,6 +33,8 @@ class AppContainer:
     gates: GateManager
     orchestrator: Orchestrator | None  # None when no LLM is configured: reading works, starting runs is refused
     jobs: JobService
+    auth: AuthService
+    auth_deps: AuthDeps
 
 
 def gateway_from_settings(settings: Settings, audit: SqlAuditLog) -> Gateway | None:
@@ -53,4 +58,6 @@ def build_container(engine: Engine, settings: Settings, *, gateway: Gateway | No
             gateway=gateway, embedder=embedder or HashEmbedder(), fetcher=fetcher or GitHubFetcher(token=settings.github_token or None),
             papers=papers, runs=runs, gates=gates, events=events, jobs=jobs))
         jobs.on_finished = lambda job: orch.on_job_finished(job.run_id)  # reaper / cancel path
-    return AppContainer(papers=papers, runs=runs, gate_repo=gate_repo, events=events, gates=gates, orchestrator=orch, jobs=jobs)
+    auth = AuthService(SqlAuthRepo(factory), settings, resolve_secret(settings) if settings.auth_enabled else "auth-disabled-placeholder")
+    return AppContainer(papers=papers, runs=runs, gate_repo=gate_repo, events=events, gates=gates, orchestrator=orch, jobs=jobs,
+                        auth=auth, auth_deps=build_deps(auth, settings))

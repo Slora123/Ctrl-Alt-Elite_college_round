@@ -89,6 +89,55 @@ class _Datasets:
 datasets = _Datasets()
 
 
+# --------------------------------------------------------------------------- secrets (opt-in per secret)
+class SecretNotGranted(KeyError):
+    pass
+
+
+class _UserData:
+    """``userdata.get("HF_TOKEN")``: only secrets the user explicitly granted to notebooks are present. Values are
+    redacted from every output the platform stores or emits, but a cell that has the value can of course use it
+    (e.g. send it over the network), so grant only what notebooks genuinely need."""
+
+    def _load(self):
+        import os
+        path = os.environ.get("PAPER_ENV_USERDATA")
+        if not path or not os.path.exists(path):
+            return {}
+        with open(path) as f:
+            return json.load(f)
+
+    def get(self, name):
+        data = self._load()
+        if name not in data:
+            raise SecretNotGranted(
+                f"secret {name!r} is not available to notebooks: add it in the Secrets panel and enable "
+                "'allow in notebooks' for it")
+        return data[name]
+
+    def list(self):
+        return sorted(self._load())
+
+    def __repr__(self):
+        return "<userdata: " + (", ".join(self.list()) or "no secrets granted") + ">"
+
+
+userdata = _UserData()
+
+
+# --------------------------------------------------------------------------- metrics (pipeline clean runs)
+METRICS = {}
+
+
+def report_metric(name, value):
+    """Publish a number from a cell (the CrisisGrid pipeline reads these after a clean run)."""
+    METRICS[str(name)] = float(value)
+
+
+def dump_metrics():
+    _emit("metrics", {"metrics": dict(METRICS)})
+
+
 # --------------------------------------------------------------------------- seeding
 def seed_all(seed):
     """Seed python, numpy and torch (if installed). Returns what was and wasn't seeded, explicitly."""
@@ -114,6 +163,9 @@ def seed_all(seed):
 
 def setup(seed, extra=None):
     _user_ns()["datasets"] = datasets
+    _user_ns()["userdata"] = userdata
+    _user_ns()["report_metric"] = report_metric
+    _user_ns()["SEED"] = seed
     report = seed_all(seed)
     report["python_version"] = sys.version.split()[0]
     report["hashseed_env"] = __import__("os").environ.get("PYTHONHASHSEED")
@@ -162,7 +214,7 @@ def _summarize(name, obj):
 
 
 def _user_names(ns):
-    skip = {"In", "Out", "get_ipython", "exit", "quit", "open", "datasets"}
+    skip = {"In", "Out", "get_ipython", "exit", "quit", "open", "datasets", "userdata", "report_metric", "SEED"}
     return sorted(k for k, v in ns.items()
                   if not k.startswith("_") and k not in skip
                   and not isinstance(v, type(sys)))  # modules are environment, not experiment state
@@ -252,7 +304,7 @@ def _import_bindings(ns, skip):
     import importlib
     modules, objects = {}, {}
     for alias, val in list(ns.items()):
-        if alias.startswith("_") or alias in skip or alias in ("In", "Out", "datasets", "get_ipython", "exit", "quit"):
+        if alias.startswith("_") or alias in skip or alias in ("In", "Out", "datasets", "userdata", "report_metric", "SEED", "get_ipython", "exit", "quit"):
             continue
         if isinstance(val, type(sys)):
             modules[alias] = val.__name__

@@ -61,13 +61,13 @@ class CheckpointService:
             pos = next(c.position for c in cells if c.id == cell_run.cell_id)
             upto = [c for c in cells if c.position <= pos]
             names = list(dict.fromkeys(n for c in upto for n in c.declared_outputs))
-            versions = {c.id: c.current_version_id for c in upto}
+            versions = {c.id: c.current_version_id for c in upto if c.cell_type == "code"}
         cp = Checkpoint(paper_env_id=run.paper_env_id, run_id=run.id, cell_id=cell_run.cell_id,
                         cell_version_id=cell_run.cell_version_id, path="", cell_position=pos, seed=run.seed,
                         notebook_version=run.notebook_version, cell_versions=versions)
         dest = self.settings.checkpoints_dir(run.paper_env_id) / cp.id
         try:
-            ref = self.backend.snapshot(session.handle, dest=dest, names=names)
+            ref = session.backend.snapshot(session.handle, dest=dest, names=names)
         except BackendError as e:
             self.bus.publish(EventType.CHECKPOINT_SAVED, {
                 "checkpoint_id": cp.id, "ok": False, "error": str(e), "cell_id": cell_run.cell_id},
@@ -117,7 +117,7 @@ class CheckpointService:
         opts = self._kernel_opts(f"resume-{cp.id}", env)
         try:
             session = self.runner.start_session(cp.paper_env_id, cp.seed, **opts)
-            report = self.backend.restore(session.handle, CheckpointRef(id=cp.id, path=cp.path))
+            report = session.backend.restore(session.handle, CheckpointRef(id=cp.id, path=cp.path))
         except (SessionError, BackendError) as e:
             raise CheckpointError(f"could not resume from {cp.id}: {e}") from e
 
@@ -147,6 +147,8 @@ class CheckpointService:
         for c in cells:
             if c.position > cp.cell_position:
                 break
+            if c.cell_type != "code":
+                continue  # documentation does not affect kernel state
             if cp.cell_versions.get(c.id) != c.current_version_id:
                 msgs.append(f"cell {c.id} (position {c.position}) was edited or added since the checkpoint")
                 first_bad = c.position

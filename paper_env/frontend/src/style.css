@@ -47,3 +47,10 @@ button.danger{color:var(--failed)}button:disabled{opacity:.5;cursor:default}
 pre.json{font:11.5px ui-monospace,monospace;white-space:pre-wrap;word-break:break-all}
 #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#1f2328;color:#fff;padding:8px 14px;border-radius:8px;display:none;z-index:10;max-width:80vw}
 .empty{color:var(--mute);padding:40px;text-align:center}
+
+.cell.s-markdown{border-left-color:#7c8aa5}.b-md{background:#7c8aa5}
+.md{padding:10px 14px;border-top:0;max-height:none;font-size:14px}.md h1,.md h2,.md h3{margin:.4em 0}.md p{margin:.4em 0}.md code{background:var(--code);padding:1px 4px;border-radius:3px}
+.toc a{color:var(--running);text-decoration:none}.toc{padding:2px 0}
+.signin{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50}.signin .card{max-width:420px}
+.btn{display:inline-block;padding:5px 10px;border:1px solid var(--line);border-radius:6px;text-decoration:none;color:inherit;background:var(--panel)}
+label.row{justify-content:space-between}label.row input{max-width:110px;flex:0 0 110px}

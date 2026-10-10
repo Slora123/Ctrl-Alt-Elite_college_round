@@ -44,7 +44,7 @@ def test_hook_sees_every_gated_action_kind_and_each_is_paused(kstack_factory, de
         ActionKind.REBUILD_ENV: st.envs.rebuild_env(env.id),
         ActionKind.FETCH_DATASET: st.datasets.fetch("d@v1"),
     }
-    assert {a.kind for a in hook.seen} == set(ActionKind)  # the hook was consulted for all five kinds
+    assert {a.kind for a in hook.seen} == set(ActionKind) - {ActionKind.OPEN_TERMINAL}  # all five gated kinds (the terminal has its own WebSocket path)
     assert results[ActionKind.EXECUTE_CELL].status == RunStatus.BLOCKED
     for kind in (ActionKind.INSTALL_PACKAGE, ActionKind.PIN_VERSION, ActionKind.REBUILD_ENV):
         assert results[kind].status == "blocked" and results[kind].blocked_action_id

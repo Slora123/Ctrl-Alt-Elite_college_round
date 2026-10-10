@@ -52,6 +52,16 @@ CrisisGrid/
 
 The structure above represents the main website files and may not include every project directory.
 
+## Run the whole system
+
+```bash
+python scripts/run_all.py            # website :5173, website API :8000, CrisisGrid API :8100 (incl. notebook environment)
+python scripts/run_all.py --help     # --no-auth, --worker, --terminal, --llm-chain/--llm-key
+```
+
+Open http://localhost:5173/ and create the first account (it becomes the administrator). Architecture, authentication and
+known limits: [docs/INTEGRATION.md](docs/INTEGRATION.md).
+
 ## Getting Started
 
 ### Prerequisites

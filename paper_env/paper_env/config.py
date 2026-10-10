@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +24,9 @@ class Settings:
     checkpoint_after_each_cell: bool = False
     kernel_start_timeout_s: float = 90.0
     max_upload_bytes: int = 2 * 1024 ** 3
+    enable_terminal: bool = field(default_factory=lambda: os.environ.get("PAPER_ENV_ENABLE_TERMINAL") == "1")
+    reaper_interval_s: float = 15.0  # how often idle / max-age / cost limits are checked; 0 disables
+    require_auth: bool = field(default_factory=lambda: os.environ.get("PAPER_ENV_REQUIRE_AUTH") == "1")
     interrupt_grace_s: float = 5.0  # after a timeout interrupt, how long before the kernel is killed
 
     def __post_init__(self) -> None:

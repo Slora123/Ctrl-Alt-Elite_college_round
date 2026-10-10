@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from crisisgrid_core.jobs import Capabilities
 
+from .auth.models import User
 from .config import Settings
 from .container import AppContainer
 from .jobs.models import Worker
@@ -52,7 +53,7 @@ def build_worker_router(c: AppContainer, settings: Settings) -> APIRouter:
         return {"worker_id": w.id, "token": token}  # shown once
 
     @r.get("/workers")
-    def list_workers() -> list[dict[str, Any]]:
+    def list_workers(_: User = Depends(c.auth_deps.writer)) -> list[dict[str, Any]]:
         return [w.model_dump(mode="json") for w in svc.repo.list_workers()]
 
     @r.post("/workers/me/heartbeat")
@@ -93,11 +94,21 @@ def build_worker_router(c: AppContainer, settings: Settings) -> APIRouter:
         return {"status": job.status, "requeued": job.status == "queued"}
 
     @r.get("/jobs")
-    def list_jobs(run_id: str | None = None) -> list[dict[str, Any]]:
-        return [j.model_dump(mode="json", exclude={"spec": {"payload"}}) for j in svc.repo.list_jobs(run_id=run_id)]
+    def list_jobs(run_id: str | None = None, user: User = Depends(c.auth_deps.current_user)) -> list[dict[str, Any]]:
+        def ok(j: Any) -> bool:
+            s = c.runs.get(j.run_id)
+            p = c.papers.get(s.paper_id) if s else None
+            return user.is_admin or (p is not None and p.owner_id in (None, user.id))
+        return [j.model_dump(mode="json", exclude={"spec": {"payload"}}) for j in svc.repo.list_jobs(run_id=run_id) if ok(j)]
 
     @r.post("/jobs/{job_id}/cancel")
-    def cancel(job_id: str, bg: BackgroundTasks) -> dict[str, str]:
+    def cancel(job_id: str, bg: BackgroundTasks, user: User = Depends(c.auth_deps.writer)) -> dict[str, str]:
+        existing = svc.repo.get_job(job_id) if hasattr(svc.repo, "get_job") else None
+        if existing is not None and not user.is_admin:
+            st = c.runs.get(existing.run_id)
+            p = c.papers.get(st.paper_id) if st else None
+            if p is None or p.owner_id not in (None, user.id):
+                raise HTTPException(404, "job not found")
         job = _guard(lambda: svc.cancel(job_id))
         return {"status": job.status}
 

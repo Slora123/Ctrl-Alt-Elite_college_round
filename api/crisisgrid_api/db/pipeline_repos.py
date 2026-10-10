@@ -8,7 +8,7 @@ from .tables import GateRow, PaperRow, PipelineRunRow
 
 
 def _paper(r: PaperRow) -> PaperRecord:
-    return PaperRecord(id=r.id, paper_hash=r.paper_hash, filename=r.filename, size=r.size, created_at=r.created_at)
+    return PaperRecord(id=r.id, paper_hash=r.paper_hash, filename=r.filename, size=r.size, owner_id=r.owner_id, created_at=r.created_at)
 
 
 class SqlPaperRepo(SqlRepository):

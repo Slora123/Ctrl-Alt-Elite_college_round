@@ -51,6 +51,9 @@ class PaperEnvRow(Base):
     env_spec_id: Mapped[str] = mapped_column(ForeignKey("env_specs.id"))
     current_notebook_version: Mapped[int] = mapped_column(Integer)
     dataset_ids: Mapped[list] = mapped_column(JSON)
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    runtime: Mapped[str] = mapped_column(String)
+    limits: Mapped[dict] = mapped_column(JSON)
 
 
 class CellRow(Base):
@@ -58,6 +61,7 @@ class CellRow(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     paper_env_id: Mapped[str] = mapped_column(ForeignKey("paper_envs.id", ondelete="CASCADE"), index=True)
     position: Mapped[int] = mapped_column(Integer)
+    cell_type: Mapped[str] = mapped_column(String)
     node_id: Mapped[str | None] = mapped_column(String, nullable=True)
     source_span: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     declared_inputs: Mapped[list] = mapped_column(JSON)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..domain import EnvSpec, PaperEnv
+from ..domain import EnvSpec, PaperEnv, SessionLimits
 from ..env import EnvManager
 from ..repos import UnitOfWorkFactory
 
@@ -10,9 +10,10 @@ class PaperEnvService:
         self._uow, self.envs = uow_factory, envs
 
     def create(self, alias: str, paper_hash: str, spec: EnvSpec | None = None, dataset_ids: list[str] | None = None,
-               build_env: bool = False) -> PaperEnv:
+               build_env: bool = False, owner_id: str | None = None) -> PaperEnv:
         spec = spec or EnvSpec()
-        env = PaperEnv(alias=alias, paper_hash=paper_hash, env_spec_id=spec.id, dataset_ids=dataset_ids or [])
+        env = PaperEnv(alias=alias, paper_hash=paper_hash, env_spec_id=spec.id, dataset_ids=dataset_ids or [],
+                       owner_id=owner_id)
         with self._uow() as u:
             u.paper_envs.add(env, spec)
         if build_env:
@@ -39,6 +40,20 @@ class PaperEnvService:
         with self._uow() as u:
             env = u.paper_envs.get(paper_env_id)
             env.dataset_ids = list(dict.fromkeys(dataset_ids))
+            u.paper_envs.update(env)
+            return env
+
+    def set_runtime(self, paper_env_id: str, runtime: str) -> PaperEnv:
+        with self._uow() as u:
+            env = u.paper_envs.get(paper_env_id)
+            env.runtime = runtime
+            u.paper_envs.update(env)
+            return env
+
+    def set_limits(self, paper_env_id: str, limits: SessionLimits) -> PaperEnv:
+        with self._uow() as u:
+            env = u.paper_envs.get(paper_env_id)
+            env.limits = limits
             u.paper_envs.update(env)
             return env
 

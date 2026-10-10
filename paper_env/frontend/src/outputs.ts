@@ -2,10 +2,15 @@
 // models are created with trusted=false, so HTML is sanitized and scripts never run.
 import { RenderMimeRegistry, standardRendererFactories } from '@jupyterlab/rendermime';
 import { Widget } from '@lumino/widgets';
+import { marked } from 'marked';
 import type { LiveWidgetManager } from './widgets';
 
 const WIDGET_MIME = 'application/vnd.jupyter.widget-view+json';
-const registry = new RenderMimeRegistry({ initialFactories: standardRendererFactories });
+// rendermime sanitizes the HTML that the markdown parser produces (the notebook text is untrusted, e.g. imported)
+const registry = new RenderMimeRegistry({
+  initialFactories: standardRendererFactories,
+  markdownParser: { render: async (src: string) => marked.parse(src, { async: false }) as string },
+});
 let widgets: LiveWidgetManager | null = null;
 export const setWidgetManager = (m: LiveWidgetManager) => { widgets = m; };
 
@@ -34,4 +39,10 @@ export async function renderBundle(data: Record<string, any>, host: HTMLElement)
     return;
   }
   await renderMime(mime, usable, host);
+}
+
+/** Render markdown (sanitized). */
+export async function renderMarkdown(text: string, host: HTMLElement) {
+  host.replaceChildren();
+  await renderMime('text/markdown', { 'text/markdown': text }, host);
 }

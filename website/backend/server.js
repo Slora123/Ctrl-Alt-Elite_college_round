@@ -9,6 +9,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 import * as ai from './ai_mock.js';
+import { authMiddleware, loadSecret, isAdmin, AUTH_ENABLED } from './auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,8 +77,29 @@ function analyze(text) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, ai_provider: ai.PROVIDER });
+  res.json({ ok: true, ai_provider: ai.PROVIDER, auth: AUTH_ENABLED });
 });
+
+// ---- authentication + ownership (everything below requires a valid token) -----------------------------------------
+{ const c0 = db(); try { c0.exec("alter table papers add column owner text"); } catch (e) { /* already there */ } c0.close(); }
+app.use('/api', authMiddleware(loadSecret(BASE)));
+
+const canSee = (user, owner) => isAdmin(user) || owner == null || owner === user.id;
+function visiblePaperIds(c, user) {
+  return new Set(c.prepare("select id, owner from papers").all().filter(r => canSee(user, r.owner)).map(r => r.id));
+}
+// every route with :pid or :iid is checked here, so a user can never reach another user's paper or its items
+app.param('pid', (req, res, next, pid) => {
+  const c = db(); const r = c.prepare("select owner from papers where id=?").get(pid); c.close();
+  if (r && !canSee(req.user, r.owner)) return res.status(404).json({ detail: "Paper not found" });
+  next();
+});
+app.param('iid', (req, res, next, iid) => {
+  const c = db(); const r = c.prepare("select p.owner as owner from items i left join papers p on p.id = i.paper_id where i.id=?").get(iid); c.close();
+  if (r && !canSee(req.user, r.owner)) return res.status(404).json({ detail: "Not found" });
+  next();
+});
+app.get('/api/me', (req, res) => res.json(req.user));
 
 app.post('/api/papers', upload.single('file'), async (req, res) => {
   if (!req.file || !req.file.originalname.toLowerCase().endsWith('.pdf')) {
@@ -108,8 +130,8 @@ app.post('/api/papers', upload.single('file'), async (req, res) => {
   const title = (lines[0] || req.file.originalname).substring(0, 140);
   
   const c = db();
-  const info = c.prepare("insert into papers(filename,stored,title,size,pages,text,analysis,created) values(?,?,?,?,?,?,?,?)")
-    .run(req.file.originalname, stored, title, data.length, pages, text, JSON.stringify(analyze(text)), now());
+  const info = c.prepare("insert into papers(filename,stored,title,size,pages,text,analysis,created,owner) values(?,?,?,?,?,?,?,?,?)")
+    .run(req.file.originalname, stored, title, data.length, pages, text, JSON.stringify(analyze(text)), now(), req.user.id === 'local' ? null : req.user.id);
   
   const id = info.lastInsertRowid;
   log(c, "Paper uploaded", req.file.originalname, id);
@@ -130,7 +152,7 @@ function paperRow(r, full = false) {
 
 app.get('/api/papers', (req, res) => {
   const c = db();
-  const rows = c.prepare("select * from papers order by id desc").all();
+  const rows = c.prepare("select * from papers order by id desc").all().filter(r => canSee(req.user, r.owner));
   c.close();
   res.json(rows.map(r => paperRow(r)));
 });
@@ -225,7 +247,8 @@ function getItems(kind, paper_id = null) {
 app.get('/api/items/:kind', (req, res) => {
   try {
     const data = getItems(req.params.kind, req.query.paper_id ? parseInt(req.query.paper_id) : null);
-    res.json(data);
+    const c = db(); const vis = visiblePaperIds(c, req.user); c.close();
+    res.json(data.filter(it => it.paper_id == null || vis.has(it.paper_id)));
   } catch (e) {
     res.status(e.status || 500).json({ detail: e.msg || e.message });
   }
@@ -237,7 +260,8 @@ app.post('/api/items/:kind', (req, res) => {
     const pid = parseInt(d.paper_id);
     delete d.paper_id;
     const c = db();
-    if (!c.prepare("select 1 from papers where id=?").get(pid)) {
+    const prow = c.prepare("select owner from papers where id=?").get(pid);
+    if (!prow || !canSee(req.user, prow.owner)) {
       c.close();
       return res.status(404).json({ detail: "Paper not found" });
     }
@@ -335,10 +359,12 @@ app.post('/api/papers/:pid/autocheck', (req, res) => {
 app.get('/api/overview', (req, res) => {
   try {
     const c = db();
-    const out = { papers: c.prepare("select * from papers order by id desc").all().map(r => paperRow(r)) };
+    const rows = c.prepare("select * from papers order by id desc").all().filter(r => canSee(req.user, r.owner));
+    const out = { papers: rows.map(r => paperRow(r)) };
+    const vis = new Set(rows.map(r => r.id));
     c.close();
     for (const k of Object.keys(REQ)) {
-      out[k] = getItems(k);
+      out[k] = getItems(k).filter(it => it.paper_id == null || vis.has(it.paper_id));
     }
     res.json(out);
   } catch (e) {
@@ -348,7 +374,8 @@ app.get('/api/overview', (req, res) => {
 
 app.get('/api/history', (req, res) => {
   const c = db();
-  res.json(c.prepare("select * from history order by id desc limit 200").all());
+  const vis = visiblePaperIds(c, req.user);
+  res.json(c.prepare("select * from history order by id desc limit 1000").all().filter(h => h.paper_id == null || vis.has(h.paper_id)).slice(0, 200));
   c.close();
 });
 
@@ -553,6 +580,7 @@ function seed(c) {
 }
 
 app.post('/api/seed', (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ detail: 'administrator only' });
   const c = db();
   const id = seed(c);
   c.close();

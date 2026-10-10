@@ -1,6 +1,7 @@
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view';
 import { EditorState, Prec } from '@codemirror/state';
 import { python } from '@codemirror/lang-python';
+import { markdown } from '@codemirror/lang-markdown';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type CompletionContext } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, indentOnInput, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
@@ -24,7 +25,7 @@ export interface Editor {
 
 const dark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
 
-export function createEditor(parent: HTMLElement, initial: string, hooks: EditorHooks): Editor {
+export function createEditor(parent: HTMLElement, initial: string, hooks: EditorHooks, lang: 'python' | 'markdown' = 'python'): Editor {
   // Completions come from the live kernel (IPython's completer); without a kernel they quietly yield nothing.
   const kernelSource = async (ctx: CompletionContext) => {
     const before = ctx.matchBefore(/[\w.]*/);
@@ -44,9 +45,8 @@ export function createEditor(parent: HTMLElement, initial: string, hooks: Editor
           { key: 'Shift-Tab', run: v => { hooks.onInspect(v.state.doc.toString(), v.state.selection.main.head); return true; } },
         ])),
         lineNumbers(), history(), drawSelection(), highlightActiveLine(), indentOnInput(), bracketMatching(), closeBrackets(),
-        python(), syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        EditorState.languageData.of(() => [{ autocomplete: kernelSource }]),
-        autocompletion({ activateOnTyping: true }),
+        lang === 'python' ? python() : markdown(), syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        ...(lang === 'python' ? [EditorState.languageData.of(() => [{ autocomplete: kernelSource }]), autocompletion({ activateOnTyping: true })] : []),
         keymap.of([...closeBracketsKeymap, ...completionKeymap, ...historyKeymap, indentWithTab, ...defaultKeymap]),
         EditorView.updateListener.of(u => { if (u.docChanged && !(u.transactions.some(t => t.annotation(external)))) hooks.onChange(u.state.doc.toString()); }),
         EditorView.lineWrapping,

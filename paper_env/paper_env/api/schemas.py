@@ -35,6 +35,7 @@ class PinReq(BaseModel):
 
 class AddCell(BaseModel):
     source: str
+    cell_type: Literal["code", "markdown"] = "code"
     author: Author = Author.HUMAN
     position: int | None = None
     declared_inputs: list[str] = Field(default_factory=list)
@@ -119,3 +120,40 @@ class CommReq(BaseModel):
 
 class InputReq(BaseModel):
     text: str
+
+
+class SetRuntime(BaseModel):
+    runtime: str
+
+
+class Limits(BaseModel):
+    idle_timeout_s: int | None = Field(default=1800, ge=30)
+    max_session_s: int | None = Field(default=43200, ge=60)
+    max_cost: float | None = Field(default=None, ge=0)
+
+
+class PutSecret(BaseModel):
+    value: str
+    allow_in_cells: bool = False
+
+
+class GrantSecret(BaseModel):
+    allow_in_cells: bool
+
+
+class FindReq(BaseModel):
+    pattern: str
+    regex: bool = False
+    case: bool = False
+
+
+class ReplaceReq(FindReq):
+    replacement: str
+    author: Author = Author.HUMAN
+    cell_ids: list[str] | None = None
+
+
+class ImportReq(BaseModel):
+    notebook: dict[str, Any]
+    install_packages: bool = False
+    author: Author = Author.HUMAN

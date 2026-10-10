@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,11 @@ from alembic import command
 from alembic.config import Config
 
 API_ROOT = Path(__file__).resolve().parents[1]
+
+# The pre-existing suites exercise the pipeline without logging in and without mounting paper_env.
+# test_auth.py turns authentication back on explicitly.
+os.environ.setdefault("CG_AUTH_ENABLED", "0")
+os.environ.setdefault("CG_PAPER_ENV", "0")
 
 
 def alembic_config(url: str) -> Config:

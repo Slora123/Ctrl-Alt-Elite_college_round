@@ -1,5 +1,5 @@
 // SYNTHETIC DEMONSTRATION DATA — no real papers or results.
-const NAV=[["OVERVIEW",[["mission","Mission Control"],["papers","Research Papers"]]],["ANALYZE",[["understand","Paper Understanding"],["artifact","Artifact Verification"],["claims","Claim Verification"]]],["RECONSTRUCT",[["lab","Experiment Lab"],["graph","Experiment Graph"],["versions","Version Comparison"]]],["AUDIT",[["audit","Research Audit"],["reports","Evidence Reports"],["history","Experiment History"]]],["SYSTEM",[["settings","Settings"]]]];
+const NAV=[["OVERVIEW",[["mission","Mission Control"],["papers","Research Papers"]]],["ANALYZE",[["understand","Paper Understanding"],["artifact","Artifact Verification"],["claims","Claim Verification"]]],["RECONSTRUCT",[["lab","Experiment Lab"],["graph","Experiment Graph"],["versions","Version Comparison"]]],["AUDIT",[["audit","Research Audit"],["reports","Evidence Reports"],["history","Experiment History"]]],["PLATFORM",[["pipeline","Pipeline (live)"],["notebook","Notebook"]]],["SYSTEM",[["account","Account"],["settings","Settings"]]]];
 const BUILT=["mission","papers","claims","graph","audit"];
 // SYNTHETIC DEMONSTRATION DATA — no real papers or results.
 const P=[
@@ -21,7 +21,7 @@ const AU=[["A-01","Missing methodology","Medium","Normalization constants not sp
 ["A-06","Dependency conflict","Low","Expected torch 1.13 vs demo env 2.x","Env check (sample)","Environment","Resolved in demo","None"]];
 const PIPE=[["Paper","complete"],["Methodology","blocked"],["Dataset","complete"],["Model","complete"],["Evaluation","current"],["Claim Verification","not executed"]];
 const SL={reproduced:["ok","Reproduced in demo"],partial:["wa","Partially reproduced"],blocked:["bl","Blocked: missing info"],risk:["no","Methodology issues"]};
-const IC={mission:"◎",papers:"▤",understand:"☰",artifact:"⬡",claims:"✓",lab:"⚗",graph:"⌬",versions:"⇄",audit:"⚑",reports:"▧",history:"◷",settings:"⚙"};
+const IC={mission:"◎",papers:"▤",understand:"☰",artifact:"⬡",claims:"✓",lab:"⚗",graph:"⌬",versions:"⇄",audit:"⚑",reports:"▧",history:"◷",settings:"⚙",pipeline:"⛓",notebook:"▣",account:"☺"};
 const KV={understand:["Paper Understanding","Fields from the synthetic P-102 sample. Real extraction needs a backend.",[["Model","Shift-Window ResNet"],["Dataset","SYN-TinyImg-50k"],["Preprocessing","NOT SPECIFIED"],["Train/test split","80 / 20"],["Optimizer","SGD"],["Learning rate","1e-3"],["Batch size","128"],["Epochs","NOT SPECIFIED"],["Random seed","NOT SPECIFIED"],["Metrics","Top-1, Top-5"],["Hardware","1 GPU (sample)"]]],artifact:["Artifact Verification","Sample statuses only; no repository, dataset or GPU was accessed.",[["Source code","Repository listed in sample","Not checked"],["Dataset","SYN-TinyImg-50k","Verified in demo"],["Dependencies","torch 1.13 expected, 2.x in demo env","Needs manual review"],["Compute","1 GPU; 10k subset as smaller alternative","Unavailable in sample"]]]};
 const V=[{n:"v1",c:{"learning rate":"1e-3","batch size":"128",seed:"unset"},a:.841},{n:"v2",c:{"learning rate":"5e-4","batch size":"128",seed:"42"},a:.853}];
 export {NAV,P,CL,G,AU,PIPE,SL,IC,KV,V}

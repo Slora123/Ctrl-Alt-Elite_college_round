@@ -1,7 +1,10 @@
 import './style.css';
-import { api, enc, ApiError, type Json } from './api';
+import { api, enc, put as putFile, download, BASE, getToken, setToken, setUnauthorizedHandler, wsUrl, withToken, ApiError, type Json } from './api';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 import { createEditor, type Editor } from './editor';
-import { renderBundle, renderStream, setWidgetManager } from './outputs';
+import { renderBundle, renderMarkdown, renderStream, setWidgetManager } from './outputs';
 import { LiveWidgetManager } from './widgets';
 
 // ---------------------------------------------------------------- helpers
@@ -39,6 +42,9 @@ const state = {
   sources: {} as Record<string, string>, dirty: {} as Record<string, string>, outputs: {} as Record<string, CellOut>,
   openHist: {} as Record<string, boolean>, prompts: {} as Record<string, { prompt: string; password: boolean }>,
   session: null as string | null,
+  termHost: null as HTMLElement | null, fit: null as FitAddon | null,
+  find: { pattern: '', replacement: '', regex: false, case: false },
+  mdEditing: {} as Record<string, boolean>, me: null as Json, runtimes: [] as Json[], term: null as { t: Terminal; ws: WebSocket } | null,
 };
 const ui: Record<string, { code: boolean; out: boolean }> = JSON.parse(localStorage.getItem('ui') || '{}');
 const uiOf = (id: string) => (ui[id] ||= { code: false, out: false });
@@ -84,6 +90,7 @@ class CellView {
   err = h('pre', { class: 'err' });
   info = h('div', { class: 'decl' });
   doc = h('div', { class: 'doc' });
+  md = h('div', { class: 'md out' });
   hist = h('div', { class: 'hist' });
   editor: Editor;
   author = h('select', { title: 'author recorded on the new CellVersion' }, ...['human', 'agent', 'generator'].map(a => h('option', { value: a }, a)));
@@ -92,13 +99,14 @@ class CellView {
 
   constructor(public cell: Json) {
     this.cellId = cell.id;
-    this.root.append(this.head, this.form, this.host, this.decl, this.warn, this.doc, this.out, this.prompt, this.err, this.info, this.hist);
+    this.root.append(this.head, this.form, this.host, this.md, this.decl, this.warn, this.doc, this.out, this.prompt, this.err, this.info, this.hist);
+    this.md.addEventListener('dblclick', () => { state.mdEditing[this.cellId] = true; this.update(this.cell); this.editor.focus(); });
     this.editor = createEditor(this.host, state.dirty[cell.id] ?? state.sources[cell.id] ?? '', {
       onChange: doc => { state.dirty[this.cellId] = doc; this.host.classList.add('dirty'); this.renderForm(); },
-      onRun: () => runCell(this.cell), onSave: () => saveCell(this.cell, this.author.value),
+      onRun: () => (this.cell.cell_type === 'markdown' ? renderMd(this.cell) : runCell(this.cell)), onSave: () => saveCell(this.cell, this.author.value),
       onInspect: (code, pos) => this.inspect(code, pos),
       complete: async (code, pos) => (state.envId && state.session ? api('POST', `/paper-envs/${state.envId}/kernel/complete`, { code, cursor_pos: pos }) : null),
-    });
+    }, cell.cell_type === 'markdown' ? 'markdown' : 'python');
     this.doc.style.display = 'none';
   }
 
@@ -163,8 +171,27 @@ class CellView {
     }
   }
 
+  updateMarkdown(cell: Json) {
+    const editing = state.mdEditing[cell.id] ?? ((state.sources[cell.id] ?? '').trim() === '');
+    this.root.className = 'cell s-markdown';
+    put(this.head, h('span', { class: 'meta' }, `[${cell.position}]`), h('span', { class: 'badge b-md' }, 'text'), h('span', { class: 'sp' }),
+      h('button', { class: 'primary', title: 'Shift+Enter', onclick: () => (editing ? renderMd(cell) : (state.mdEditing[cell.id] = true, this.update(cell), this.editor.focus())) }, editing ? '✓ Render' : '✎ Edit'),
+      this.author, h('button', { onclick: () => saveCell(cell, this.author.value) }, 'Save'),
+      h('button', { onclick: () => { state.openHist[cell.id] = !state.openHist[cell.id]; this.update(this.cell); } }, 'History'),
+      h('button', { class: 'danger', onclick: () => delCell(cell) }, '✕'));
+    if (!(cell.id in state.dirty)) { this.editor.set(state.sources[cell.id] ?? ''); this.host.classList.remove('dirty'); }
+    this.host.style.display = editing ? '' : 'none';
+    this.md.style.display = editing ? 'none' : 'block';
+    for (const el of [this.form, this.decl, this.warn, this.out, this.prompt, this.err, this.info, this.doc]) el.style.display = 'none';
+    if (!editing) void renderMarkdown(state.dirty[cell.id] ?? state.sources[cell.id] ?? '', this.md).catch(() => (this.md.textContent = state.sources[cell.id] ?? ''));
+    this.hist.style.display = state.openHist[cell.id] ? 'block' : 'none';
+    if (state.openHist[cell.id]) void this.renderHistory();
+  }
+
   update(cell: Json) {
     this.cell = cell; this.cellId = cell.id;
+    if (cell.cell_type === 'markdown') return this.updateMarkdown(cell);
+    this.md.style.display = 'none';
     const u = uiOf(cell.id);
     this.root.className = `cell s-${cell.status}`;
     put(this.head, 
@@ -186,6 +213,7 @@ class CellView {
     this.warn.style.display = !u.code && cell.input_warnings?.length ? 'block' : 'none';
     this.warn.textContent = '⚠ ' + (cell.input_warnings ?? []).join(' · ');
     this.renderForm();
+    this.md.style.display = 'none';
     const pr = state.prompts[cell.id];
     this.prompt.style.display = pr ? 'flex' : 'none';
     if (pr) {
@@ -260,7 +288,11 @@ function paint() {
     h('button', { disabled: !!active, onclick: () => startRun('clean'), title: 'fresh kernel, fixed seed, verification-eligible' }, '✓ Run clean'),
     h('button', { disabled: !active, onclick: () => interrupt() }, '■ Interrupt'),
     h('button', { disabled: !!active, onclick: () => restartKernel() }, '↻ Restart kernel'),
-    h('button', { onclick: () => addCell() }, '+ Code'),
+    h('button', { onclick: () => addCell('code') }, '+ Code'),
+    h('button', { onclick: () => addCell('markdown') }, '+ Text'),
+    runtimeSelect(),
+    h('button', { onclick: () => pickIpynb() }, 'Import .ipynb'),
+    h('button', { onclick: guard(async () => download(`/paper-envs/${state.envId}/export.ipynb`, `${curEnv()?.alias ?? 'notebook'}.ipynb`)) }, 'Export .ipynb'),
     h('label', { class: 'meta' }, h('input', { type: 'checkbox', id: 'stopOnFail', checked: true }), ' stop on fail'),
     h('span', { style: 'flex:1' }),
     h('span', { class: 'meta' }, lock ? `lock ${lock.slice(0, 10)} · seed ${state.detail.env_spec.seed}` : 'env not built'),
@@ -282,7 +314,25 @@ function paint() {
 }
 
 // ---------------------------------------------------------------- actions
-const addCell = guard(async () => { await api('POST', `/paper-envs/${state.envId}/cells`, { source: '# new cell\n', author: 'human' }); await loadAll(true); });
+const addCell = guard(async (cell_type: 'code' | 'markdown' = 'code') => {
+  const c = await api('POST', `/paper-envs/${state.envId}/cells`, { source: cell_type === 'code' ? '# new cell\n' : '## Heading\n\nWrite notes here.', author: 'human', cell_type });
+  if (cell_type === 'markdown') state.mdEditing[c.id] = true;
+  await loadAll(true);
+});
+const renderMd = guard(async (c: Json) => { if (state.dirty[c.id] !== undefined) await saveCell(c); state.mdEditing[c.id] = false; views.get(c.id)?.update(c); });
+const pickIpynb = () => { const i = Object.assign(document.createElement('input'), { type: 'file', accept: '.ipynb,application/json' });
+  i.onchange = guard(async () => { const f = i.files?.[0]; if (!f) return; const nb = JSON.parse(await f.text());
+    const r = await api('POST', `/paper-envs/${state.envId}/import-ipynb`, { notebook: nb, install_packages: confirm('Install the packages found in !pip lines now? (Cancel = just list them)') });
+    toast(`imported ${r.cells_added} code + ${r.markdown_cells} text cells` + (r.packages.length ? `; packages: ${r.packages.join(', ')}` : '') + (r.warnings.length ? ` · ${r.warnings[0]}` : ''), r.warnings.length > 0);
+    await loadAll(true); }); i.click(); };
+function runtimeSelect() {
+  const env = curEnv(); const sel = h('select', { title: 'Runtime type (restarts the kernel)', onchange: guard(async (e: any) => {
+    if (!confirm('Changing the runtime ends the current kernel; executed cells become stale. Continue?')) { e.target.value = env?.runtime; return; }
+    try { await api('PUT', `/paper-envs/${state.envId}/runtime`, { runtime: e.target.value }); toast('runtime changed'); await loadEnvs(); await loadAll(false); }
+    catch (err) { e.target.value = env?.runtime; throw err; } }) },
+    ...state.runtimes.map(r => h('option', { value: r.id, selected: r.id === env?.runtime, disabled: !r.available, title: r.reason || r.label }, r.label + (r.available ? '' : ' (unavailable)'))));
+  return sel;
+}
 const delCell = guard(async (c: Json) => { if (confirm('Delete this cell?')) { await api('DELETE', `/cells/${c.id}`); delete state.dirty[c.id]; await loadAll(true); } });
 const saveCell = guard(async (c: Json, author = 'human') => {
   const src = state.dirty[c.id]; if (src === undefined) return;
@@ -319,7 +369,7 @@ $('#neGo').addEventListener('click', guard(async () => {
 function resetEnvState() { state.sources = {}; state.dirty = {}; state.outputs = {}; state.prompts = {}; for (const v of views.values()) v.root.remove(); views.clear(); void widgets.reset(); }
 
 // ---------------------------------------------------------------- side panel
-const TABS = ['events', 'runs', 'files', 'datasets', 'env', 'blocked'];
+const TABS = ['events', 'runs', 'toc', 'find', 'files', 'datasets', 'env', 'runtime', 'secrets', 'terminal', 'blocked'];
 function renderTabs() { $('#tabs').replaceChildren(...TABS.map(t => h('button', { class: state.tab === t ? 'on' : '', onclick: () => { state.tab = t; renderTabs(); renderPanel(); } }, t))); }
 function showJson(obj: unknown) { state.tab = '__json'; $('#panel').replaceChildren(h('button', { onclick: () => { state.tab = 'runs'; renderTabs(); renderPanel(); } }, '← back'), h('pre', { class: 'json' }, JSON.stringify(obj, null, 2))); }
 function summarize(e: Json) {
@@ -347,10 +397,10 @@ async function renderPanel() {
     if (!state.envId) return put(p, 'no env');
     const files = await api<Json[]>('GET', `/paper-envs/${state.envId}/files`);
     const pick = h('input', { type: 'file', multiple: true, onchange: guard(async (e: any) => {
-      for (const f of e.target.files) { const r = await fetch(`/paper-envs/${state.envId}/files/${enc(f.name)}`, { method: 'PUT', body: f }); if (!r.ok) throw new ApiError((await r.json()).detail || r.statusText, r.status); }
+      for (const f of e.target.files) await putFile(`/paper-envs/${state.envId}/files/${enc(f.name)}`, f);
       toast('uploaded'); void renderPanel(); }) });
     put(p, h('div', { class: 'meta' }, 'Cells run inside this folder: open("data.csv") finds uploads, and files your code writes show up here.'), h('div', { class: 'row' }, pick),
-      ...files.map(f => h('div', { class: 'fileitem' }, h('a', { href: `/paper-envs/${state.envId}/files/${enc(f.path)}`, download: f.path.split('/').pop() }, f.path), h('small', {}, `${f.size} B`),
+      ...files.map(f => h('div', { class: 'fileitem' }, h('a', { href: withToken(`${BASE}/paper-envs/${state.envId}/files/${enc(f.path)}`), download: f.path.split('/').pop() }, f.path), h('small', {}, `${f.size} B`),
         h('button', { class: 'danger', onclick: guard(async () => { await api('DELETE', `/paper-envs/${state.envId}/files/${enc(f.path)}`); void renderPanel(); }) }, '✕'))),
       files.length ? null : h('div', { class: 'meta' }, 'empty'), h('button', { onclick: () => renderPanel() }, 'refresh'));
   } else if (t === 'datasets') {
@@ -374,11 +424,82 @@ async function renderPanel() {
         h('button', { onclick: () => op('rebuild')() }, 'rebuild'), h('button', { onclick: guard(async () => showJson(await api('GET', `/paper-envs/${state.envId}/env/lockfile`))) }, 'lockfile'),
         h('button', { onclick: guard(async () => showJson(await api('GET', `/paper-envs/${state.envId}/env/hardware`))) }, 'hardware')),
       h('div', { class: 'meta' }, 'Packages are installed only here, never from a cell. Install ipywidgets to use widgets.'));
+  } else if (t === 'toc') {
+    const items: { cell: Json; level: number; title: string }[] = [];
+    for (const c of state.cells) if (c.cell_type === 'markdown') for (const line of (state.sources[c.id] ?? '').split('\n')) { const m = /^(#{1,6})\s+(.*)$/.exec(line); if (m) items.push({ cell: c, level: m[1].length, title: m[2] }); }
+    put(p, h('div', { class: 'meta' }, 'Outline from markdown headings'), ...items.map(i => h('div', { class: 'toc', style: `padding-left:${(i.level - 1) * 14}px` },
+      h('a', { href: '#', onclick: (e: Event) => { e.preventDefault(); views.get(i.cell.id)?.root.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, i.title))),
+      items.length ? null : h('div', { class: 'meta' }, 'No headings yet. Add a text cell (+ Text) and start it with “# Title”.'));
+  } else if (t === 'find') {
+    const pat = h('input', { placeholder: 'find', value: state.find.pattern }), rep = h('input', { placeholder: 'replace with', value: state.find.replacement });
+    const rx = h('input', { type: 'checkbox', checked: state.find.regex, style: 'flex:0' }), cs = h('input', { type: 'checkbox', checked: state.find.case, style: 'flex:0' });
+    const results = h('div', {});
+    const remember = () => { state.find = { pattern: pat.value, replacement: rep.value, regex: rx.checked, case: cs.checked }; };
+    const doFind = guard(async () => { remember(); const hits = await api<Json[]>('POST', `/paper-envs/${state.envId}/find`, { pattern: pat.value, regex: rx.checked, case: cs.checked });
+      put(results, h('div', { class: 'meta' }, `${hits.length} match(es)`), ...hits.map(x => h('div', { class: 'listitem' }, h('a', { href: '#', onclick: (e: Event) => { e.preventDefault(); views.get(x.cell_id)?.root.scrollIntoView({ behavior: 'smooth' }); } }, `cell ${x.position}:${x.line}`), ' ', h('code', {}, x.text)))); });
+    pat.addEventListener('keydown', (e: any) => { if (e.key === 'Enter') void doFind(); });
+    put(p, h('div', { class: 'row' }, pat), h('div', { class: 'row' }, rep), h('div', { class: 'row meta' }, h('label', {}, rx, ' regex'), h('label', {}, cs, ' match case')),
+      h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => doFind() }, 'Find'),
+        h('button', { onclick: guard(async () => { remember(); if (!pat.value) return; const hits = await api<Json[]>('POST', `/paper-envs/${state.envId}/find`, { pattern: pat.value, regex: rx.checked, case: cs.checked });
+          if (!hits.length) return toast('nothing to replace'); if (!confirm(`Replace in ${new Set(hits.map(h => h.cell_id)).size} cell(s)? Each change becomes a new cell version.`)) return;
+          const r = await api<Json[]>('POST', `/paper-envs/${state.envId}/replace`, { pattern: pat.value, replacement: rep.value, regex: rx.checked, case: cs.checked, author: 'human' });
+          toast(`replaced in ${r.length} cell(s)`); await reload(); }) }, 'Replace all')), results);
+    if (state.find.pattern) void doFind();
+  } else if (t === 'runtime') {
+    const env = curEnv(); if (!env) return put(p, 'no env');
+    const info = await api<Json>('GET', `/paper-envs/${state.envId}/session`);
+    const L = info.limits, mins = (v: number | null) => (v == null ? '' : String(Math.round(v / 60)));
+    const idle = h('input', { type: 'number', min: 1, value: mins(L.idle_timeout_s), placeholder: 'none' }), mx = h('input', { type: 'number', min: 1, value: mins(L.max_session_s), placeholder: 'none' });
+    const cost = h('input', { type: 'number', min: 0, step: 'any', value: L.max_cost ?? '', placeholder: 'none' });
+    const s_ = info.session;
+    put(p, h('div', { class: 'listitem' }, h('b', {}, 'Runtime: '), env.runtime, h('br'),
+      s_ ? h('small', {}, `kernel up ${Math.round(s_.age_s / 60)} min · idle ${Math.round(s_.idle_s / 60)} min · cost so far ${s_.cost_so_far} (${s_.cost_per_hr}/hr)${s_.busy ? ' · busy' : ''}`) : h('small', {}, 'no kernel running')),
+      h('div', { class: 'meta' }, 'Auto-disconnect limits. When one is hit the kernel is shut down and executed cells become stale.'),
+      h('label', { class: 'row' }, 'Idle timeout (min)', idle), h('label', { class: 'row' }, 'Max session length (min)', mx), h('label', { class: 'row' }, 'Cost cap', cost),
+      h('button', { class: 'primary', onclick: guard(async () => { const n = (el: HTMLInputElement, k = 1) => (el.value === '' ? null : Math.round(+el.value * k));
+        await api('PUT', `/paper-envs/${state.envId}/limits`, { idle_timeout_s: n(idle, 60), max_session_s: n(mx, 60), max_cost: cost.value === '' ? null : +cost.value }); toast('limits saved'); void renderPanel(); }) }, 'Save limits'),
+      h('div', { class: 'listitem' }, h('b', {}, 'Available runtimes'), ...state.runtimes.map(r => h('div', { class: 'meta' }, `${r.available ? '●' : '○'} ${r.label}${r.available ? '' : ' — ' + r.reason}${r.cost_per_hr ? ` · ${r.cost_per_hr}/hr` : ''}`))));
+  } else if (t === 'secrets') {
+    const list = await api<Json[]>('GET', '/secrets');
+    const name = h('input', { placeholder: 'NAME e.g. HF_TOKEN' }), val = h('input', { type: 'password', placeholder: 'value (never shown again)' });
+    const grant = h('input', { type: 'checkbox', style: 'flex:0' });
+    put(p, h('div', { class: 'meta' }, 'Stored encrypted on the server, only for you. Values are never displayed and are redacted from all outputs and logs. Dataset fetches (e.g. HF_TOKEN → hf_token) can use them. Notebooks can read a secret with userdata.get("NAME") only if you tick “allow in notebooks”.'),
+      h('div', { class: 'row' }, name), h('div', { class: 'row' }, val), h('div', { class: 'row meta' }, h('label', {}, grant, ' allow in notebooks')),
+      h('button', { class: 'primary', onclick: guard(async () => { await api('PUT', `/secrets/${encodeURIComponent(name.value.trim())}`, { value: val.value, allow_in_cells: grant.checked }); toast('secret saved'); void renderPanel(); }) }, 'Save secret'),
+      ...list.map(sx => h('div', { class: 'listitem' }, h('b', {}, sx.name), ' ', h('label', { class: 'meta' }, h('input', { type: 'checkbox', checked: sx.allow_in_cells, onchange: guard(async (e: any) => { await api('PATCH', `/secrets/${sx.name}`, { allow_in_cells: e.target.checked }); }) }), ' allow in notebooks'),
+        ' ', h('button', { class: 'danger', onclick: guard(async () => { if (confirm(`Delete ${sx.name}?`)) { await api('DELETE', `/secrets/${sx.name}`); void renderPanel(); } }) }, '✕'))),
+      list.length ? null : h('div', { class: 'meta' }, 'no secrets yet'));
+  } else if (t === 'terminal') {
+    renderTerminalPanel(p);
   } else if (t === 'blocked') {
     const bl = await api<Json[]>('GET', '/blocked');
     put(p, h('div', { class: 'meta' }, 'Actions paused by the pre-execute hook.'), ...bl.map(b => h('div', { class: 'listitem' }, h('b', {}, b.kind), ' ', badge('blocked'), h('div', {}, h('small', {}, `${b.decision}: ${b.reason}`)), h('pre', { class: 'json' }, JSON.stringify(b.payload, null, 1)),
       ['allow', 'deny'].map(dn => h('button', { onclick: guard(async () => { await api('POST', `/blocked/${b.id}/resolve`, { decision: dn, reason: 'from UI' }); void renderPanel(); softRefresh(); }) }, dn)))), bl.length ? null : h('div', { class: 'meta' }, 'nothing pending'));
   }
+}
+
+// ---------------------------------------------------------------- terminal
+function renderTerminalPanel(p: HTMLElement) {
+  if (state.term) { put(p, h('div', { class: 'meta' }, 'terminal open'), state.termHost!, h('button', { class: 'danger', onclick: () => closeTerminal() }, 'Close terminal')); state.fit?.fit(); return; }
+  put(p, h('div', { class: 'meta' }, 'A real shell in this environment’s files folder, with its Python on PATH. It is NOT sandboxed (it runs as the server’s user) and must be enabled by the server operator. Packages installed here are detected afterwards and recorded as an unmanaged environment change.'),
+    h('button', { class: 'primary', onclick: () => openTerminal(p) }, 'Open terminal'));
+}
+function closeTerminal() { state.term?.ws.close(); state.term?.t.dispose(); state.term = null; state.termHost = null; state.fit = null; void renderPanel(); }
+function openTerminal(p: HTMLElement) {
+  if (!state.envId) return;
+  const host = h('div', { style: 'height:360px;margin:8px 0;background:#000;border-radius:6px;padding:4px' });
+  const t = new Terminal({ cursorBlink: true, fontSize: 12, convertEol: true }), fit = new FitAddon();
+  t.loadAddon(fit);
+  const ws = new WebSocket(wsUrl(`/paper-envs/${state.envId}/terminal`));
+  state.term = { t, ws }; state.termHost = host; state.fit = fit;
+  ws.onmessage = m => t.write(m.data);
+  ws.onclose = () => { t.write('\r\n[terminal closed]\r\n'); };
+  ws.onopen = () => { fit.fit(); ws.send(JSON.stringify({ type: 'resize', rows: t.rows, cols: t.cols })); };
+  t.onData(d => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', data: d })); });
+  t.onResize(({ rows, cols }) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', rows, cols })); });
+  put(p, h('div', { class: 'meta' }, 'terminal open'), host, h('button', { class: 'danger', onclick: () => closeTerminal() }, 'Close terminal'));
+  t.open(host); setTimeout(() => fit.fit(), 50);
+  window.addEventListener('resize', () => fit.fit());
 }
 
 // ---------------------------------------------------------------- live events
@@ -399,8 +520,8 @@ function onEvent(e: Json) {
     if (e.type === 'cell_started') { state.active ||= 'live'; state.outputs[p.cell_id] = { items: [] }; delete state.prompts[p.cell_id]; const c = state.cells.find(c => c.id === p.cell_id); if (c) { c.status = 'running'; views.get(c.id)?.update(c); } }
     else if (e.type === 'cell_output') pushOutput(p.cell_id, p);
     else if (e.type === 'input_requested') { state.prompts[p.cell_id] = { prompt: p.prompt, password: p.password }; const c = state.cells.find(c => c.id === p.cell_id); if (c) views.get(c.id)?.update(c); }
-    else if (e.type === 'kernel_died' || (e.type === 'env_changed' && p.op === 'kernel_restart')) void widgets.reset();
-    if (/cell_finished|cell_failed|kernel_died|run_finished|cell_edited|env_changed|action_/.test(e.type)) softRefresh();
+    else if (e.type === 'kernel_died' || e.type === 'session_expired' || (e.type === 'env_changed' && p.op === 'kernel_restart')) { void widgets.reset(); if (e.type === 'session_expired') toast(`kernel disconnected: ${p.message}`, true); }
+    if (/cell_finished|cell_failed|kernel_died|session_expired|run_finished|cell_edited|env_changed|action_/.test(e.type)) softRefresh();
   }
   if (state.tab === 'events' && e.seq != null) void renderPanel();
 }
@@ -408,15 +529,33 @@ async function connectWS() {
   state.ws?.close();
   const hist = await api<Json[]>('GET', '/events/history?limit=10000');
   state.lastSeq = hist.length ? hist[hist.length - 1].seq : 0; state.events = hist.slice(-100);
-  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/events?after_seq=${state.lastSeq}`); state.ws = ws;
+  const ws = new WebSocket(wsUrl(`/events?after_seq=${state.lastSeq}`)); state.ws = ws;
   ws.onmessage = m => onEvent(JSON.parse(m.data));
   ws.onclose = () => setTimeout(() => state.ws === ws && void connectWS(), 2000);
 }
 
 // ---------------------------------------------------------------- boot
+function showSignIn(message = 'Sign in required') {
+  if (document.getElementById('signin')) return;
+  const next = encodeURIComponent(location.pathname + location.search);
+  const tok = h('input', { type: 'password', placeholder: 'paste an API token' });
+  const box = h('div', { id: 'signin', class: 'signin' }, h('div', { class: 'card' }, h('h3', {}, message),
+    h('p', { class: 'meta' }, 'This notebook uses the same login as the CrisisGrid website.'),
+    h('div', { class: 'row' }, h('a', { class: 'btn', target: '_top', href: `/#/login?next=${next}` }, 'Go to sign in')),
+    h('div', { class: 'row' }, tok, h('button', { class: 'primary', onclick: () => { setToken(tok.value.trim()); location.reload(); } }, 'Use token'))));
+  document.body.append(box);
+}
+setUnauthorizedHandler(() => {
+  if (window.parent !== window) window.parent.postMessage({ type: 'cg:unauthorized' }, location.origin);  // embedded in the website: let it handle sign-in
+  else showSignIn('Your session is missing or has expired');
+});
+
 (async () => {
   renderTabs();
+  const qEnv = new URLSearchParams(location.search).get('env'); if (qEnv) { state.envId = qEnv; localStorage.setItem('envId', qEnv); }
   try { const hz = await api('GET', '/health'); $('#health').textContent = `backend: ${hz.backend.backend} · gpu: ${hz.backend.gpu}`; } catch { $('#health').textContent = 'API unreachable'; }
+  try { state.me = await api('GET', '/me'); $('#health').textContent += ` · ${state.me.name} (${state.me.role})`; } catch { return; }  // 401 -> sign-in overlay
+  state.runtimes = await api<Json[]>('GET', '/runtimes').catch(() => []);
   await guard(loadEnvs)(); await guard(() => loadAll(true))(); void connectWS();
   setInterval(() => { if (state.active) softRefresh(); }, 2500);
 })();

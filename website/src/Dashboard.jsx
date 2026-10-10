@@ -3,8 +3,11 @@ import {NavLink,Link,Routes,Route,Navigate,useLocation} from 'react-router-dom'
 import {NAV} from './data'
 import {useLoad} from './api'
 import * as Pg from './pages'
+import * as Pg2 from './pages2'
+import {useAuth} from './auth'
 
 export default function Dashboard(){
+  const auth=useAuth()
   const [tol,setTol]=useState(()=>+localStorage.getItem('cg.tol')||0.01)
   const [pid,setPid]=useState(null)
   const [sidebarOpen,setSidebarOpen]=useState(()=>typeof window !== 'undefined' ? window.innerWidth > 900 : true)
@@ -21,7 +24,7 @@ export default function Dashboard(){
   const ctx={tol,setT,pid,setPid,papers,reloadPapers:pl.reload}
   const loc=useLocation().pathname.slice(1)||'mission'
   const cur=NAV.flatMap(g=>g[1]).find(x=>x[0]===loc)
-  const R={mission:Pg.Mission,papers:Pg.Papers,understand:Pg.Understand,artifact:Pg.Artifacts,claims:Pg.Claims,lab:Pg.Lab,graph:Pg.Graph,versions:Pg.Versions,audit:Pg.Audit,reports:Pg.Reports,history:Pg.History,settings:Pg.Settings}
+  const R={mission:Pg.Mission,papers:Pg.Papers,understand:Pg.Understand,artifact:Pg.Artifacts,claims:Pg.Claims,lab:Pg.Lab,graph:Pg.Graph,versions:Pg.Versions,audit:Pg.Audit,reports:Pg.Reports,history:Pg.History,settings:Pg.Settings,pipeline:Pg2.Pipeline,notebook:Pg2.Notebook,account:Pg2.Account}
 
   return (
     <div id="app" className={sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}>
@@ -75,7 +78,10 @@ export default function Dashboard(){
             CrisisGrid <span className="bar-slash">/</span> <span className="bar-cur">{cur?.[1]}</span>
           </span>
           <span style={{flex:1}}/>
-          <span className="chip"><i className="dot" style={{background:'#C98B2B'}}/>Local mode</span>
+          {auth.cfg?.auth_enabled
+            ? <span className="chip" title={auth.user?.email}><i className="dot" style={{background:'#2f9e44'}}/>{auth.user?.name} · {auth.user?.role}</span>
+            : <span className="chip"><i className="dot" style={{background:'#C98B2B'}}/>Local mode (no login)</span>}
+          {auth.cfg?.auth_enabled && <button className="btn-sm" onClick={auth.logout}>Sign out</button>}
           <span className="chip">{papers.length} papers · {pl.err?'API offline':'API online'}</span>
           <span className="chip">No experiments executed</span>
         </div>

@@ -83,6 +83,7 @@ class ActionKind(StrEnum):
     PIN_VERSION = "pin_version"
     REBUILD_ENV = "rebuild_env"
     FETCH_DATASET = "fetch_dataset"
+    OPEN_TERMINAL = "open_terminal"
 
 
 class BlockedActionStatus(StrEnum):
@@ -102,6 +103,7 @@ class EventType(StrEnum):
     KERNEL_DIED = "kernel_died"
     RUN_STARTED = "run_started"
     RUN_FINISHED = "run_finished"
+    SESSION_EXPIRED = "session_expired"
     INPUT_REQUESTED = "input_requested"
     COMM_MESSAGE = "comm_message"  # ephemeral (not persisted): widget traffic
     ACTION_BLOCKED = "action_blocked"

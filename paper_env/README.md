@@ -59,6 +59,34 @@ env (env tab). Limits: widget state is lost on page reload or kernel restart (re
 widget packages are loaded (no third-party widget JS); untrusted SVG is shown as its text fallback; completion needs a
 live kernel (run any cell first) and waits while a cell is executing.
 
+## Accounts, roles and ownership
+
+paper_env knows only a `Principal` and an `Authenticator` (`paper_env/auth.py`). Mounted in CrisisGrid it uses the platform's
+tokens; standalone set `PAPER_ENV_API_TOKEN` (one admin token) or leave it open on loopback (`PAPER_ENV_REQUIRE_AUTH=1`
+refuses to run without an authenticator). Roles: `viewer` (read-only), `researcher`, `admin`. Every paper environment has an
+`owner_id`; users only see and touch their own (admins see all, unowned ones are visible to everyone signed in). One router
+dependency enforces this for every route and WebSocket, including events (filtered per user).
+
+## More notebook features
+
+* **Markdown cells** (`cell_type: markdown`): documentation, never executed, never stale; table of contents panel built from
+  headings; **find & replace** across cells (replace goes through `apply_edit`, so it is versioned and attributed).
+* **`.ipynb` import/export** (`POST …/import-ipynb`, `GET …/export.ipynb`). Import never executes anything; `!pip install` /
+  `%pip install` lines are rewritten to comments and returned as packages (installed only if you ask, through the Env manager and
+  the hook). Other magics are reported.
+* **Runtime picker** (`GET /runtimes`, `PUT /paper-envs/{id}/runtime`): CPU, local GPU (NVIDIA or Apple silicon, if detected), TPU
+  and AWS (listed as unavailable with the reason). Switching ends the kernel; cells go stale.
+* **Session limits**: idle timeout, maximum length and a cost cap per environment (`/paper-envs/{id}/limits`), enforced by a
+  background sweeper; expiry emits `session_expired` and marks executed cells stale.
+* **Secrets** (`/secrets`): per-user, Fernet-encrypted on disk, never returned by any endpoint, redacted from all output.
+  Dataset fetchers use them (e.g. `HF_TOKEN`). `userdata.get("NAME")` works in a notebook only for secrets you explicitly ticked
+  "allow in notebooks"; a cell holding a secret can of course misuse it, and variables derived from it can end up in a
+  checkpoint file, so grant sparingly.
+* **Terminal** (`WS …/terminal`, xterm.js): disabled unless the operator sets `PAPER_ENV_ENABLE_TERMINAL=1`; researcher/admin only;
+  goes through the hook as `open_terminal`; a real unsandboxed shell with the env's Python on `PATH`. When it closes, the
+  environment is re-frozen and any package change is recorded as an *unmanaged* `env_changed` event with a new lockfile hash.
+* **Files panel**, **forms (`# @param`)**, **widgets**, **tqdm**, **`input()`**: see the Web UI section.
+
 ## Public Python API
 
 Build everything with `app = build_app(Settings(...), hook=..., secrets=..., backend=...)`, then call

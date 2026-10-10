@@ -11,7 +11,7 @@ const fixControlsRequire = {
 
 export default defineConfig({
   plugins: [fixControlsRequire],
-  base: '/ui/',
+  base: './',  // relative, so it works at /ui/ and when mounted at /paper-env/ui/
   build: { outDir: '../paper_env/api/static/app', emptyOutDir: true, chunkSizeWarningLimit: 4000 },
   server: { port: 5173, proxy: { '/paper-envs': 'http://127.0.0.1:8000', '/runs': 'http://127.0.0.1:8000', '/cells': 'http://127.0.0.1:8000',
     '/cell-versions': 'http://127.0.0.1:8000', '/datasets': 'http://127.0.0.1:8000', '/checkpoints': 'http://127.0.0.1:8000',

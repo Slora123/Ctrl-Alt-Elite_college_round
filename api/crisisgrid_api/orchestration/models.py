@@ -40,6 +40,7 @@ class PaperRecord(BaseModel):
     paper_hash: str
     filename: str = ""
     size: int = 0
+    owner_id: str | None = None  # the user that uploaded it; None = created while authentication was off
     created_at: datetime = Field(default_factory=utcnow)
 
 

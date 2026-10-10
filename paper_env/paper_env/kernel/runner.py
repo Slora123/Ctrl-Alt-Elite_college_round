@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from ..backends.registry import RuntimeUnavailable, as_registry
 from ..backends import (
     BackendError, ComputeBackend, ExecDisplay, ExecError, ExecFinished, ExecInfraFailure, ExecOutput,
     RuntimeHandle,
@@ -49,6 +50,15 @@ class Session:
     alive: bool = True
     death: dict[str, Any] | None = None  # why it died, if it did
     lock: threading.Lock = field(default_factory=threading.Lock)
+    backend: Any = None  # the ComputeBackend this session lives on (chosen by the PaperEnv's runtime profile)
+    profile_id: str = "local-cpu"
+    cost_per_hr: float = 0.0
+    started_mono: float = field(default_factory=time.monotonic)
+    last_activity: float = field(default_factory=time.monotonic)
+    busy: bool = False
+
+    def touch(self) -> None:
+        self.last_activity = time.monotonic()
 
 
 def parse_traceback(source: str, ename: str, evalue: str, tb: list[str]) -> ErrorInfo:
@@ -67,7 +77,9 @@ class KernelRunner:
     def __init__(self, settings: Settings, uow_factory: UnitOfWorkFactory, bus: EventBus, gate: ActionGate,
                  backend: ComputeBackend, notebook: NotebookService, datasets: Any | None = None):
         self.settings, self._uow, self.bus, self.gate = settings, uow_factory, bus, gate
-        self.backend, self.notebook, self.datasets = backend, notebook, datasets
+        self.registry = as_registry(backend)
+        self.backend = self.registry.default  # fallback for code that has no session yet
+        self.notebook, self.datasets = notebook, datasets
         self.sessions: dict[str, Session] = {}
         self._guard = threading.Lock()
         gate.register_executor(ActionKind.EXECUTE_CELL, self._execute_blocked)
@@ -80,13 +92,17 @@ class KernelRunner:
         """Fresh kernel (replacing any existing one). Raises SessionError if the backend cannot provide one."""
         self.shutdown(paper_env_id)
         with self._uow() as u:
-            spec = u.paper_envs.get_spec(u.paper_envs.get(paper_env_id).env_spec_id)
+            env = u.paper_envs.get(paper_env_id)
+            spec = u.paper_envs.get_spec(env.env_spec_id)
         try:
-            handle = self.backend.provision(spec, paper_env_id=paper_env_id, seed=seed, **provision_opts)
-        except BackendError as e:
+            profile = self.registry.profile(env.runtime)
+            backend = self.registry.backend_for(env.runtime)
+            handle = backend.provision(spec, paper_env_id=paper_env_id, seed=seed, **provision_opts)
+        except (BackendError, RuntimeUnavailable) as e:
             raise SessionError(str(e)) from e
-        s = Session(id=uuid.uuid4().hex[:12], paper_env_id=paper_env_id, handle=handle, seed=seed)
-        self.backend.on_comm(handle, lambda ev, pid=paper_env_id: self.bus.emit_ephemeral(
+        s = Session(id=uuid.uuid4().hex[:12], paper_env_id=paper_env_id, handle=handle, seed=seed, backend=backend,
+                    profile_id=profile.id, cost_per_hr=profile.cost_per_hr)
+        backend.on_comm(handle, lambda ev, pid=paper_env_id: self.bus.emit_ephemeral(
             EventType.COMM_MESSAGE, {"msg_type": ev.msg_type, "content": ev.content, "buffers": ev.buffers,
                                      "metadata": ev.metadata}, paper_env_id=pid))
         with self._guard:
@@ -119,22 +135,30 @@ class KernelRunner:
         return s
 
     def provide_input(self, paper_env_id: str, text: str) -> None:
-        self.backend.provide_input(self._live(paper_env_id).handle, text)
+        s = self._live(paper_env_id)
+        s.touch()
+        s.backend.provide_input(s.handle, text)
 
     def complete(self, paper_env_id: str, code: str, cursor_pos: int) -> dict[str, Any]:
-        return self.backend.complete(self._live(paper_env_id).handle, code, cursor_pos)
+        s = self._live(paper_env_id)
+        s.touch()
+        return s.backend.complete(s.handle, code, cursor_pos)
 
     def inspect(self, paper_env_id: str, code: str, cursor_pos: int) -> dict[str, Any]:
-        return self.backend.inspect(self._live(paper_env_id).handle, code, cursor_pos)
+        s = self._live(paper_env_id)
+        s.touch()
+        return s.backend.inspect(s.handle, code, cursor_pos)
 
     def comm_send(self, paper_env_id: str, msg_type: str, content: dict[str, Any], buffers: list[str] | None = None) -> None:
-        self.backend.comm_send(self._live(paper_env_id).handle, msg_type, content, buffers)
+        s = self._live(paper_env_id)
+        s.touch()
+        s.backend.comm_send(s.handle, msg_type, content, buffers)
 
     def interrupt(self, paper_env_id: str) -> bool:
         s = self.sessions.get(paper_env_id)
         if not s or not s.alive:
             return False
-        self.backend.interrupt(s.handle)
+        s.backend.interrupt(s.handle)
         return True
 
     def shutdown(self, paper_env_id: str | None = None) -> None:
@@ -142,8 +166,36 @@ class KernelRunner:
         for pid in ids:
             with self._guard:
                 s = self.sessions.pop(pid, None)
+            (self.settings.env_dir(pid) / "userdata.json").unlink(missing_ok=True)  # granted secrets leave with the kernel
             if s:
-                self.backend.teardown(s.handle)
+                s.backend.teardown(s.handle)
+
+    def expire(self, paper_env_id: str, reason: str, message: str) -> bool:
+        """End a session because of a limit (idle / max age / cost) or a runtime change. Whatever was in memory is
+        gone, so every executed cell becomes stale and a ``session_expired`` event says so."""
+        s = self.sessions.get(paper_env_id)
+        if s is None:
+            return False
+        if s.busy:
+            s.backend.interrupt(s.handle)
+            end = time.monotonic() + 10
+            while s.busy and time.monotonic() < end:
+                time.sleep(0.1)
+        self.shutdown(paper_env_id)
+        stale = self.notebook.mark_all_stale(paper_env_id)
+        self.bus.publish(EventType.SESSION_EXPIRED, {"reason": reason, "message": message, "state_lost": True,
+                                                     "stale_cells": stale}, paper_env_id=paper_env_id)
+        return True
+
+    def session_info(self, paper_env_id: str) -> dict[str, Any] | None:
+        s = self.sessions.get(paper_env_id)
+        if s is None:
+            return None
+        now = time.monotonic()
+        age = now - s.started_mono
+        return {"session_id": s.id, "alive": s.alive, "busy": s.busy, "runtime": s.profile_id, "age_s": round(age, 1),
+                "idle_s": 0.0 if s.busy else round(now - s.last_activity, 1), "cost_so_far": round(age / 3600 * s.cost_per_hr, 4),
+                "cost_per_hr": s.cost_per_hr}
 
     # ------------------------------------------------------------------ execution
     def execute_cell(self, run: Run, cell_id: str, *, timeout: float | None = None) -> CellRun:
@@ -199,7 +251,9 @@ class KernelRunner:
         infra: ExecInfraFailure | None = None
         interrupted_for_limit = False
         with session.lock:  # cells in one kernel run strictly one at a time
-            for ev in self.backend.execute(session.handle, source, timeout):
+            session.busy = True
+            session.touch()
+            for ev in session.backend.execute(session.handle, source, timeout):
                 if isinstance(ev, ExecOutput):
                     for text, overwrite in rec.stream(ev.stream, ev.text):
                         self._emit_output(run, cell, cr, {"type": "stream", "name": ev.stream, "text": text,
@@ -220,12 +274,16 @@ class KernelRunner:
                     infra = ev
                 if rec.limit_exceeded and not interrupted_for_limit and final is None:
                     interrupted_for_limit = True  # once: repeated SIGINTs would also hit the next cell
-                    self.backend.interrupt(session.handle)
+                    session.backend.interrupt(session.handle)
             for name, text in rec.flush():
                 self._emit_output(run, cell, cr, {"type": "stream", "name": name, "text": text})
             duration = time.monotonic() - t0
-            if infra is None and final == "ok" and not rec.limit_exceeded:
-                cr.state_hash = self._state_hash(session, cell, rec)
+            try:
+                if infra is None and final == "ok" and not rec.limit_exceeded:
+                    cr.state_hash = self._state_hash(session, cell, rec)
+            finally:
+                session.busy = False
+                session.touch()
         cr.outputs, cr.output_truncated, cr.full_output_path = rec.finish()
         cr.duration = duration
 
@@ -320,7 +378,7 @@ class KernelRunner:
     def run_internal(self, session: Session, code: str, timeout: float = 120.0) -> tuple[list[dict], ExecError | ExecInfraFailure | None]:
         """Run runtime-support code in the kernel; returns structured internal payloads (no eval, no text parsing)."""
         out, err = [], None
-        for ev in self.backend.execute(session.handle, code, timeout, internal=True):
+        for ev in session.backend.execute(session.handle, code, timeout, internal=True):
             if isinstance(ev, ExecDisplay) and INTERNAL_MIME in ev.data:
                 out.append(ev.data[INTERNAL_MIME])
             elif isinstance(ev, (ExecError, ExecInfraFailure)):

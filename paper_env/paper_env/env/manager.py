@@ -168,6 +168,26 @@ class EnvManager:
     def hardware_info(self, paper_env_id: str) -> dict[str, Any]:
         return collect_hardware_info(self.python_path(paper_env_id))
 
+    def detect_drift(self, paper_env_id: str) -> bool:
+        """Re-freeze the environment and compare with the recorded lockfile hash. Packages changed outside the Env
+        manager (e.g. in the terminal) are recorded honestly: the lockfile and hash are updated (they are part of run
+        identity) and an ``env_changed`` event flags the change as unmanaged. Returns True if drift was found."""
+        with self._lock_for(paper_env_id):
+            spec = self._load(paper_env_id)
+            if not self.settings.venv_python(paper_env_id).exists():
+                return False
+            frozen = self._freeze(paper_env_id)
+            if frozen is None or frozen[0] == spec.lockfile_hash:
+                return False
+            before = spec.lockfile_hash
+            spec.lockfile_hash = frozen[0]
+            self._save_spec(spec)
+        self.bus.publish(EventType.ENV_CHANGED, {
+            "op": "external_change", "before_lockfile_hash": before, "after_lockfile_hash": frozen[0],
+            "unmanaged": True, "note": "packages changed outside the Env manager (terminal?); lockfile re-captured"},
+            paper_env_id=paper_env_id)
+        return True
+
     def cleanup_temp(self) -> list[str]:
         """Remove half-built environments (``*.staging`` / ``*.old``) left by a crash. Called at startup."""
         removed = []

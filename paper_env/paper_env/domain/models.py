@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,8 +26,10 @@ __all__ = [
     "new_id", "utcnow", "content_hash", "make_dataset_id",
     "EnvSpec", "PaperEnv", "Cell", "CellVersion", "ErrorInfo",
     "Run", "CellRun", "DatasetFile", "DatasetSplit", "DatasetManifest",
-    "Event", "BlockedAction", "Checkpoint", "UnserializableItem",
+    "Event", "BlockedAction", "Checkpoint", "UnserializableItem", "SessionLimits", "CellType",
 ]
+
+CellType = Literal["code", "markdown"]
 
 
 def new_id() -> str:
@@ -56,6 +58,14 @@ class EnvSpec(BaseModel):
     lockfile_hash: str | None = None  # part of version identity; None until built
 
 
+class SessionLimits(BaseModel):
+    """Auto-disconnect and spend caps for a kernel session. ``None`` disables a limit."""
+
+    idle_timeout_s: int | None = 1800
+    max_session_s: int | None = 12 * 3600
+    max_cost: float | None = None  # in the profile's currency units; checked against cost_per_hr * elapsed hours
+
+
 class PaperEnv(BaseModel):
     id: str = Field(default_factory=new_id)
     alias: str
@@ -64,12 +74,16 @@ class PaperEnv(BaseModel):
     env_spec_id: str
     current_notebook_version: int = 0
     dataset_ids: list[str] = Field(default_factory=list)  # datasets every run of this paper needs
+    owner_id: str | None = None  # principal that created it (None = created without authentication)
+    runtime: str = "local-cpu"  # RuntimeProfile id, see backends/registry.py
+    limits: SessionLimits = Field(default_factory=SessionLimits)
 
 
 class Cell(BaseModel):
     id: str = Field(default_factory=new_id)
     paper_env_id: str
     position: int
+    cell_type: CellType = "code"  # markdown cells are documentation: they never execute and never go stale
     node_id: str | None = None
     source_span: dict[str, Any] | None = None
     declared_inputs: list[str] = Field(default_factory=list)

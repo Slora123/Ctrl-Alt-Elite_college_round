@@ -52,6 +52,7 @@ class RunService:
         self._active: dict[str, str] = {}  # paper_env_id -> run_id (one run per kernel at a time)
         self._active_lock = threading.Lock()
         self.checkpoints: Any | None = None  # CheckpointService, attached by the composition root
+        self.secrets_store: Any | None = None  # SecretsStore, attached by the composition root
         # blocked cells resume through the run so the rest of the plan continues
         gate.register_executor(ActionKind.EXECUTE_CELL, self._resume_blocked_cell)
         gate.register_on_deny(ActionKind.EXECUTE_CELL, self._deny_blocked_cell)
@@ -74,6 +75,8 @@ class RunService:
                  run_id: str | None = None) -> Run:
         """Run one cell in the live kernel (starting one if needed). Downstream cells become stale."""
         cell = self.notebook.get_cell(cell_id)
+        if cell.cell_type != "code":
+            raise ValueError("markdown cells are documentation and cannot be run")
         run = self._begin(cell.paper_env_id, RunMode.CELL, seed, fresh_kernel=False, run_id=run_id)
         if run.status != RunStatus.RUNNING:
             return run
@@ -86,7 +89,7 @@ class RunService:
                   run_id: str | None = None) -> Run:
         """Top to bottom in the live kernel, up to and including ``cell_id``. Later cells become stale."""
         target = self.notebook.get_cell(cell_id)
-        ids = [c.id for c in self.notebook.list_cells(target.paper_env_id) if c.position <= target.position]
+        ids = [c.id for c in self.notebook.list_cells(target.paper_env_id) if c.position <= target.position and c.cell_type == "code"]
         run = self._begin(target.paper_env_id, RunMode.UNTIL, seed, fresh_kernel=False, run_timeout=run_timeout, run_id=run_id)
         if run.status != RunStatus.RUNNING:
             return run
@@ -102,7 +105,7 @@ class RunService:
         run = self._begin(paper_env_id, RunMode.ALL, seed, fresh_kernel=False, run_timeout=run_timeout, run_id=run_id)
         if run.status != RunStatus.RUNNING:
             return run
-        ids = [c.id for c in self.notebook.list_cells(paper_env_id)]
+        ids = [c.id for c in self.notebook.list_cells(paper_env_id) if c.cell_type == "code"]
         return self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout,
                                   checkpoint=checkpoint)
 
@@ -114,7 +117,7 @@ class RunService:
         run = self._begin(paper_env_id, RunMode.CLEAN, seed, fresh_kernel=True, verification_eligible=True, run_id=run_id)
         if run.status != RunStatus.RUNNING:
             return run
-        ids = [c.id for c in self.notebook.list_cells(paper_env_id)]
+        ids = [c.id for c in self.notebook.list_cells(paper_env_id) if c.cell_type == "code"]
         return self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout,
                                   checkpoint=checkpoint)
 
@@ -126,7 +129,7 @@ class RunService:
             raise RuntimeError("checkpoint service is not configured")
         cp = self.checkpoints.get(checkpoint_id)
         res = self.checkpoints.resume_from(checkpoint_id)
-        ids = [c.id for c in self.notebook.list_cells(cp.paper_env_id) if c.position > cp.cell_position]
+        ids = [c.id for c in self.notebook.list_cells(cp.paper_env_id) if c.position > cp.cell_position and c.cell_type == "code"]
         run = self._begin(cp.paper_env_id, RunMode.ALL, cp.seed, fresh_kernel=False)
         if run.status != RunStatus.RUNNING:
             return res, run
@@ -171,7 +174,7 @@ class RunService:
             raise EnvNotReady(f"environment for {env.alias!r} has no lockfile yet; build it with create_env first")
         seed = spec.seed if seed is None else seed
         run = Run(id=rid, paper_env_id=paper_env_id, notebook_version=env.current_notebook_version,
-                  env_lockfile_hash=spec.lockfile_hash, mode=mode, seed=seed, backend=self.backend.capabilities().get("backend", "?"),
+                  env_lockfile_hash=spec.lockfile_hash, mode=mode, seed=seed, backend=env.runtime,
                   started_at=utcnow(), status=RunStatus.RUNNING, verification_eligible=verification_eligible)
         report = None
         if self.datasets is not None and env.dataset_ids:
@@ -211,10 +214,22 @@ class RunService:
 
     def _kernel_opts(self, run_id: str, env) -> dict[str, Any]:
         opts: dict[str, Any] = {"workdir": self.settings.files_dir(env.id)}
+        extra: dict[str, str] = {}
+        if self.secrets_store is not None:
+            # only secrets the owner explicitly granted to notebooks; file is 0600 and removed when the kernel ends
+            import json as _json, os as _os
+            f = self.settings.env_dir(env.id) / "userdata.json"
+            f.parent.mkdir(parents=True, exist_ok=True)
+            fd = _os.open(f, _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC, 0o600)
+            with _os.fdopen(fd, "w") as fh:
+                _json.dump(self.secrets_store.granted_to_cells(env.owner_id or "local"), fh)
+            extra["PAPER_ENV_USERDATA"] = str(f)
         if self.datasets is not None:
             ids = list(env.dataset_ids) + self._derived_ids(env.id)
             manifest = self.datasets.prepare_mount(env.id, run_id, ids)
-            opts["extra_env"] = {"PAPER_ENV_DATASETS_MANIFEST": str(manifest)}
+            extra["PAPER_ENV_DATASETS_MANIFEST"] = str(manifest)
+        if extra:
+            opts["extra_env"] = extra
         return opts
 
     def _derived_ids(self, paper_env_id: str) -> list[str]:

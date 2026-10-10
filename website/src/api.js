@@ -1,5 +1,7 @@
 import {useState,useEffect} from 'react'
-export async function api(path,o={}){const r=await fetch('/api'+path,o.body instanceof FormData?o:{headers:{'Content-Type':'application/json'},...o,body:o.body===undefined?undefined:JSON.stringify(o.body)})
+import {authHeaders} from './auth'
+export async function api(path,o={}){const r=await fetch('/api'+path,o.body instanceof FormData?{...o,headers:{...authHeaders(),...(o.headers||{})}}:{headers:{'Content-Type':'application/json',...authHeaders()},...o,body:o.body===undefined?undefined:JSON.stringify(o.body)})
+ if(r.status===401)window.dispatchEvent(new Event('cg:unauthorized'))
  if(!r.ok){let m=r.statusText;try{const j=await r.json();m=typeof j.detail==='string'?j.detail:JSON.stringify(j.detail)}catch{}const e=new Error(m);e.status=r.status;throw e}
  return o.text?r.text():r.json()}
 export function useLoad(path){const [s,setS]=useState({data:null,err:null,loading:!!path}),[n,setN]=useState(0)
