@@ -208,4 +208,10 @@ class Checkpoint(BaseModel):
     saved: list[str] = Field(default_factory=list)
     unserializable: list[UnserializableItem] = Field(default_factory=list)
     rng_saved: bool = False
+    cell_position: int = 0
+    seed: int = 0
+    notebook_version: int = 0
+    cell_versions: dict[str, str] = Field(default_factory=dict)  # cell_id -> version id at save time
+    file_hashes: dict[str, str] = Field(default_factory=dict)  # sha256 of payload files (integrity, not loaded by host)
+    notes: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utcnow)

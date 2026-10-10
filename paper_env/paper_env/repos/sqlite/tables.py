@@ -175,6 +175,12 @@ class CheckpointRow(Base):
     saved: Mapped[list] = mapped_column(JSON)
     unserializable: Mapped[list] = mapped_column(JSON)
     rng_saved: Mapped[bool] = mapped_column(Boolean)
+    cell_position: Mapped[int] = mapped_column(Integer)
+    seed: Mapped[int] = mapped_column(Integer)
+    notebook_version: Mapped[int] = mapped_column(Integer)
+    cell_versions: Mapped[dict] = mapped_column(JSON)
+    file_hashes: Mapped[dict] = mapped_column(JSON)
+    notes: Mapped[list] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 

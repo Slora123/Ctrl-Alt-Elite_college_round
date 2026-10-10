@@ -118,7 +118,7 @@ from paper_env.services.runs import RunService  # noqa: E402
 def kernel_template(tmp_path_factory):
     """One venv with ipykernel, built once per test session and copied per test."""
     root = tmp_path_factory.mktemp("kernel_template")
-    st = Stack(root, memory_uow_factory(), kernel_packages=["ipykernel"])
+    st = Stack(root, memory_uow_factory(), kernel_packages=["ipykernel", "dill"])
     st.settings.install_timeout_s = 600
     env = st.new_paper_env(alias="template")
     res = st.envs.create_env(env.id)
@@ -130,7 +130,7 @@ class KStack(Stack):
     """Stack plus notebook/backend/runner/run services and a pre-built env copied from the template."""
 
     def __init__(self, tmp_path, uow_factory, template, hook=None, **settings_kw):
-        super().__init__(tmp_path, uow_factory, hook=hook, kernel_packages=["ipykernel"])
+        super().__init__(tmp_path, uow_factory, hook=hook, kernel_packages=["ipykernel", "dill"])
         for k, v in settings_kw.items():
             setattr(self.settings, k, v)
         self.settings.min_free_disk_bytes = 0
@@ -146,6 +146,10 @@ class KStack(Stack):
         self.runs = RunService(self.settings, uow_factory, self.bus, self.gate, self.runner, self.notebook,
                                self.envs, self.backend, datasets=self.datasets)
         self.paper_envs = PaperEnvService(uow_factory, self.envs)
+        from paper_env.services.checkpoints import CheckpointService
+        self.checkpoints = CheckpointService(self.settings, uow_factory, self.bus, self.backend, self.runner,
+                                             self.notebook, self.runs._kernel_opts)
+        self.runs.checkpoints = self.checkpoints
         self.template = template
 
     def new_ready_env(self, alias="p1", **spec_kw):

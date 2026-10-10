@@ -275,8 +275,36 @@ class LocalBackend:
         rt = self._rts.get(handle.id)
         return bool(rt and not rt.dead and rt.proc.poll() is None)
 
-    def snapshot(self, handle: RuntimeHandle) -> CheckpointRef:
-        raise NotImplementedError("snapshot is provided by the checkpoint service (step 8)")
+    def _internal(self, handle: RuntimeHandle, code: str, kind: str, timeout: float = 600.0) -> dict[str, Any]:
+        for ev in self.execute(handle, code, timeout, internal=True):
+            if isinstance(ev, ExecDisplay) and INTERNAL_MIME in ev.data and ev.data[INTERNAL_MIME].get("kind") == kind:
+                return ev.data[INTERNAL_MIME]
+            if isinstance(ev, ExecError):
+                raise BackendError(f"{kind} failed in the kernel: {ev.ename}: {self.scrubber.scrub(ev.evalue)}")
+            if isinstance(ev, ExecInfraFailure):
+                raise BackendError(f"{kind} failed: {ev.message}")
+        raise BackendError(f"{kind} produced no result")
+
+    def snapshot(self, handle: RuntimeHandle, *, dest: Path | None = None, names: list[str] | None = None,
+                 **_: Any) -> CheckpointRef:
+        """Serialize ``names`` and RNG state to ``dest``. Serialization runs inside the kernel; this process
+        only receives the JSON report. Variables that cannot be serialized are reported, never skipped silently."""
+        if dest is None:
+            raise BackendError("snapshot needs a destination directory")
+        dest = Path(dest)
+        code = f"_pe.checkpoint_save({str(dest)!r}, __import__('json').loads({json.dumps(list(names or []))!r}))"
+        rep = self._internal(handle, code, "checkpoint_saved")
+        notes = list(rep.get("notes", []))
+        if rep.get("rng_error"):
+            notes.append(f"RNG state not saved: {rep['rng_error']}")
+        ref = CheckpointRef(id=dest.name, path=str(dest), saved=[x["name"] for x in rep["saved"]],
+                            unserializable=rep["unserializable"], rng_saved=bool(rep["rng_saved"]))
+        ref.notes = notes  # type: ignore[attr-defined]
+        return ref
+
+    def restore(self, handle: RuntimeHandle, ref: CheckpointRef) -> dict[str, Any]:
+        code = f"_pe.checkpoint_load({ref.path!r})"
+        return self._internal(handle, code, "checkpoint_loaded")
 
     def capabilities(self) -> dict[str, Any]:
         hw = collect_hardware_info()

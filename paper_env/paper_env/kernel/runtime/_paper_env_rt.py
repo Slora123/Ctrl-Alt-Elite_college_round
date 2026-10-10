@@ -190,3 +190,175 @@ def state_hash(declared_outputs):
         basis = "namespace_summary"
     h = hashlib.sha256(json.dumps(details, sort_keys=True).encode()).hexdigest()
     _emit("state_hash", {"state_hash": h, "basis": basis, "variables": details, "weak": weak})
+
+
+# --------------------------------------------------------------------------- checkpoint / resume
+# Serialization happens ONLY here, inside the kernel. The host never loads these files.
+def _serializer():
+    try:
+        import dill
+        return dill, "dill"
+    except ImportError:
+        import pickle
+        return pickle, "pickle"
+
+
+def _is_tensor_like(obj):
+    t = type(obj)
+    return t.__module__.startswith("torch") and hasattr(obj, "detach") and hasattr(obj, "cpu")
+
+
+def _safetensors_ok(obj):
+    import importlib.util
+    if importlib.util.find_spec("safetensors") is None or importlib.util.find_spec("torch") is None:
+        return False
+    if _is_tensor_like(obj):
+        return True
+    return isinstance(obj, dict) and obj and all(isinstance(k, str) and _is_tensor_like(v) for k, v in obj.items())
+
+
+def _rng_state():
+    import importlib.util
+    st = {"python": random.getstate()}
+    if importlib.util.find_spec("numpy") is not None:
+        import numpy as np
+        st["numpy"] = np.random.get_state()
+    if importlib.util.find_spec("torch") is not None:
+        import torch
+        st["torch"] = torch.get_rng_state()
+        if torch.cuda.is_available():
+            st["torch_cuda"] = torch.cuda.get_rng_state_all()
+    return st
+
+
+def _set_rng_state(st):
+    restored = []
+    if "python" in st:
+        random.setstate(st["python"]); restored.append("python")
+    if "numpy" in st:
+        import numpy as np
+        np.random.set_state(st["numpy"]); restored.append("numpy")
+    if "torch" in st:
+        import torch
+        torch.set_rng_state(st["torch"]); restored.append("torch")
+        if "torch_cuda" in st and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(st["torch_cuda"]); restored.append("torch_cuda")
+    return restored
+
+
+def _import_bindings(ns, skip):
+    """Names bound by ``import x [as y]`` / ``from m import f``: recorded by reference and restored by
+    importing again (nothing is pickled). A binding is only recorded if re-resolving it yields the same object."""
+    import importlib
+    modules, objects = {}, {}
+    for alias, val in list(ns.items()):
+        if alias.startswith("_") or alias in skip or alias in ("In", "Out", "datasets", "get_ipython", "exit", "quit"):
+            continue
+        if isinstance(val, type(sys)):
+            modules[alias] = val.__name__
+        elif (isinstance(val, type) or callable(val)) and getattr(val, "__module__", None) not in (None, "__main__", "builtins") \
+                and getattr(val, "__qualname__", None) and "<locals>" not in val.__qualname__:
+            try:
+                obj = importlib.import_module(val.__module__)
+                for part in val.__qualname__.split("."):
+                    obj = getattr(obj, part)
+                if obj is val:
+                    objects[alias] = [val.__module__, val.__qualname__]
+            except Exception:
+                pass
+    return modules, objects
+
+
+def checkpoint_save(dest, names):
+    import os
+    os.makedirs(dest, exist_ok=True)
+    ns = _user_ns()
+    ser, ser_name = _serializer()
+    saved, failed, notes = [], [], []
+    if ser_name != "dill":
+        notes.append("dill is not installed in this environment; using pickle (locally defined functions/classes may not restore)")
+    for n in names:
+        if not n.isidentifier():
+            failed.append({"name": n, "reason": "not a valid variable name"}); continue
+        if n not in ns:
+            failed.append({"name": n, "reason": "not defined in the kernel"}); continue
+        obj, fname = ns[n], f"var_{n}"
+        try:
+            if _safetensors_ok(obj):
+                from safetensors.torch import save_file
+                tensors = {"__tensor__": obj} if _is_tensor_like(obj) else dict(obj)
+                save_file({k: v.detach().cpu().contiguous() for k, v in tensors.items()}, os.path.join(dest, fname + ".safetensors"))
+                saved.append({"name": n, "format": "safetensors", "file": fname + ".safetensors",
+                              "single": _is_tensor_like(obj)})
+            else:
+                with open(os.path.join(dest, fname + ".bin"), "wb") as f:
+                    ser.dump(obj, f)
+                saved.append({"name": n, "format": ser_name, "file": fname + ".bin"})
+        except Exception as e:
+            for ext in (".bin", ".safetensors"):
+                try:
+                    os.remove(os.path.join(dest, fname + ext))
+                except OSError:
+                    pass
+            failed.append({"name": n, "reason": f"{type(e).__name__}: {str(e)[:200]}"})
+    rng_saved, rng_error = False, None
+    try:
+        with open(os.path.join(dest, "rng.bin"), "wb") as f:
+            ser.dump(_rng_state(), f)
+        rng_saved = True
+    except Exception as e:
+        rng_error = f"{type(e).__name__}: {str(e)[:200]}"
+    modules, objects = _import_bindings(ns, set(names))
+    manifest = {"saved": saved, "unserializable": failed, "rng_saved": rng_saved, "rng_error": rng_error, "notes": notes,
+                "modules": modules, "objects": objects}
+    with open(os.path.join(dest, "manifest.json"), "w") as f:
+        json.dump(manifest, f)
+    _emit("checkpoint_saved", manifest)
+
+
+def checkpoint_load(dest):
+    import os
+    ns = _user_ns()
+    with open(os.path.join(dest, "manifest.json")) as f:
+        manifest = json.load(f)
+    ser, _ = _serializer()
+    restored, failed = [], []
+    for item in manifest["saved"]:
+        n, path = item["name"], os.path.join(dest, item["file"])
+        try:
+            if item["format"] == "safetensors":
+                from safetensors.torch import load_file
+                data = load_file(path)
+                ns[n] = data["__tensor__"] if item.get("single") else data
+            else:
+                with open(path, "rb") as f:
+                    ns[n] = ser.load(f)
+            restored.append(n)
+        except Exception as e:
+            failed.append({"name": n, "reason": f"{type(e).__name__}: {str(e)[:200]}"})
+    import importlib
+    reimported, import_failed = [], []
+    for alias, mod in manifest.get("modules", {}).items():
+        try:
+            ns[alias] = importlib.import_module(mod); reimported.append(alias)
+        except Exception as e:
+            import_failed.append({"name": alias, "reason": f"import {mod}: {type(e).__name__}"})
+    for alias, (mod, qual) in manifest.get("objects", {}).items():
+        try:
+            obj = importlib.import_module(mod)
+            for part in qual.split("."):
+                obj = getattr(obj, part)
+            ns[alias] = obj; reimported.append(alias)
+        except Exception as e:
+            import_failed.append({"name": alias, "reason": f"from {mod} import {qual}: {type(e).__name__}"})
+    rng_restored, rng_error = [], None
+    if manifest.get("rng_saved"):
+        try:
+            with open(os.path.join(dest, "rng.bin"), "rb") as f:
+                rng_restored = _set_rng_state(ser.load(f))
+        except Exception as e:
+            rng_error = f"{type(e).__name__}: {str(e)[:200]}"
+    else:
+        rng_error = manifest.get("rng_error") or "RNG state was not saved"
+    _emit("checkpoint_loaded", {"restored": restored, "failed": failed, "rng_restored": rng_restored, "rng_error": rng_error,
+                                "reimported": reimported, "import_failed": import_failed})

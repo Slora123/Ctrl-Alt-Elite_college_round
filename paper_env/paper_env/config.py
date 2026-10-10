@@ -11,7 +11,7 @@ class Settings:
     data_dir: Path = field(default_factory=lambda: Path("paper_env_data").resolve())
     uv_bin: str = "uv"
     # Packages every kernel env needs. Recorded in the lockfile like any other package.
-    kernel_packages: list[str] = field(default_factory=lambda: ["ipykernel"])
+    kernel_packages: list[str] = field(default_factory=lambda: ["ipykernel", "dill"])
     install_timeout_s: float = 900.0
     venv_timeout_s: float = 300.0
     cell_timeout_s: float = 600.0
@@ -51,6 +51,9 @@ class Settings:
 
     def runs_dir(self, run_id: str) -> Path:
         return self.data_dir / "runs" / run_id
+
+    def checkpoints_dir(self, paper_env_id: str) -> Path:
+        return self.data_dir / "checkpoints" / paper_env_id
 
     def kernels_dir(self) -> Path:
         return self.data_dir / "kernels"
