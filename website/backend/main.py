@@ -5,7 +5,7 @@ from fastapi import FastAPI,UploadFile,File,HTTPException
 from fastapi.responses import PlainTextResponse
 import ai_mock as ai  # MOCK AI/ML layer; swap its function bodies for real models later
 try:
-    import fitz  # PyMuPDF
+    import fitz  # type: ignore # PyMuPDF
 except ImportError:
     fitz=None
 BASE=Path(__file__).parent;UP=BASE/"uploads";UP.mkdir(exist_ok=True)
