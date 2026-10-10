@@ -1,0 +1,33 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [core, api]
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          pip install -e ../core
+          if [ "${{ matrix.package }}" = "api" ]; then pip install -e .; fi
+          pip install pytest httpx ruff mypy
+      - name: Lint
+        run: ruff check .
+      - name: Type check
+        run: mypy ${{ matrix.package == 'core' && 'crisisgrid_core' || 'crisisgrid_api' }}
+      - name: Test
+        run: pytest
