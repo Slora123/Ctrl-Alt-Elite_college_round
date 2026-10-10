@@ -109,5 +109,7 @@ class EventType(StrEnum):
     DATASET_FETCH_STARTED = "dataset_fetch_started"
     DATASET_FETCH_PROGRESS = "dataset_fetch_progress"
     DATASET_VERIFIED = "dataset_verified"
+    DATASET_EVICTED = "dataset_evicted"
+    DATASET_CACHED = "dataset_cached"  # fetched, but no expected checksum existed to verify against
     DATASET_FETCH_FAILED = "dataset_fetch_failed"
     DATASET_UPSTREAM_CHANGED = "dataset_upstream_changed"

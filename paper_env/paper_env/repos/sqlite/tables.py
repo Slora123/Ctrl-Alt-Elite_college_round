@@ -134,6 +134,7 @@ class DatasetRow(Base):
     producing_cell_version_id: Mapped[str | None] = mapped_column(String, nullable=True)
     author: Mapped[str | None] = mapped_column(String, nullable=True)
     run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    remote_fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
     cache_path: Mapped[str | None] = mapped_column(String, nullable=True)
     size_bytes: Mapped[int] = mapped_column(Integer)
     last_accessed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)

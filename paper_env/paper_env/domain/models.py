@@ -160,6 +160,7 @@ class DatasetManifest(BaseModel):
     producing_cell_version_id: str | None = None
     author: str | None = None
     run_id: str | None = None  # set for derived datasets
+    remote_fingerprint: str | None = None  # ETag / revision sha seen at registration or last fetch
     cache_path: str | None = None
     size_bytes: int = 0
     last_accessed_at: datetime | None = None
