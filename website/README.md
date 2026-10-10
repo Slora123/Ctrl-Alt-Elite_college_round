@@ -1,22 +1,125 @@
 # CrisisGrid
 
-## Pages
-`/` is the animated landing page (`src/Landing.jsx`, styles in `src/landing.css`). **Skip intro** and **Explore the vision** both go to the dashboard at `/#/mission`. The sidebar logo links back to the landing page. Run `npm install` after pulling this change: it adds `three` for the 3D desk scene.
+**Making AI research more transparent, traceable, and reproducible.**
 
-## Run (one command)
+CrisisGrid is a planned AI-powered research reproducibility platform designed to help researchers analyze AI/ML papers, reconstruct experiments, assess published claims, and understand how experimental changes affect evaluation results.
+
+## Overview
+
+Reproducing AI/ML research can be difficult because papers may contain incomplete documentation, missing configurations, inaccessible datasets, or inconsistent evaluation procedures.
+
+CrisisGrid aims to bridge this gap by connecting research papers, experimental methodologies, configurations, evaluation results, and supporting evidence in a traceable workflow.
+
+## Planned Features
+
+- **Research Understanding:** Analyze research papers and supporting artifacts to identify methodologies and experimental details.
+- **Claim Verification:** Help assess whether published findings can be independently reproduced.
+- **Experiment Reconstruction:** Convert documented methodologies into structured experiment workflows.
+- **Version Comparison:** Compare experiment versions and identify changes associated with different evaluation results.
+- **Research Auditing:** Identify methodological inconsistencies, missing information, and reproducibility risks.
+- **Evidence-Based Reporting:** Present findings, limitations, comparisons, and supporting evidence.
+- **Experiment Traceability:** Track experiment configurations, versions, results, and changes.
+
+*These are planned capabilities. Their availability depends on the implementation.*
+
+## Technology Stack
+
+The specific technologies depend on the implementation. The current website uses the following frontend technologies:
+
+- React
+- Vite
+- JavaScript
+- CSS
+- npm
+
+Additional backend services and dependencies may be required for planned platform functionality.
+
+## Project Structure
+
+```text
+CrisisGrid/
+└── website/
+    ├── index.html
+    ├── package.json
+    ├── package-lock.json
+    ├── README.md
+    └── src/
+        ├── App.jsx
+        ├── Landing.jsx
+        ├── Dashboard.jsx
+        └── landing.css
 ```
-npm install
-npm run dev
+
+The structure above represents the main website files and may not include every project directory.
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js
+- npm
+
+### Installation
+
+1. Navigate to the website directory:
+
+   ```bash
+   cd website
+   ```
+
+2. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+3. Start the development server:
+
+   ```bash
+   npm run dev
+   ```
+
+4. Open the local URL displayed in your terminal.
+
+### Production Build
+
+To create a production build:
+
+```bash
+npm run build
 ```
-`npm run dev` starts the FastAPI backend (creates `backend/.venv` and installs Python deps on first run), waits until it is healthy, then starts Vite at http://localhost:5173. API docs: http://127.0.0.1:8000/docs
 
-Needs Node 18+ and Python 3.10+. Other scripts: `npm run dev:api` (backend only), `npm run dev:web` (frontend only; the API must already be running).
+To preview the production build locally:
 
-## The "ECONNREFUSED 127.0.0.1:8000" error
-It only means the backend was not running. `npm run dev` fixes that by starting both.
+```bash
+npm run preview
+```
 
-## AI/ML status: MOCK
-All AI behaviour (paper analysis, claim extraction, "reproduce", experiment runs, AI audit) comes from `backend/ai_mock.py`, which returns simulated, deterministic results tagged **MOCK AI** in the UI. The AI/ML team replaces the function bodies there; see `backend/AI_INTEGRATION.md`.
+## Research Workflow
 
-## Data
-SQLite at `backend/crisisgrid.db`, uploads in `backend/uploads`. A demo paper is created on first run (set `CG_SEED=0` to disable, or delete it in the UI).
+The planned CrisisGrid workflow is:
+
+1. Analyze a research paper and its supporting artifacts.
+2. Extract the methodology, dataset, model configuration, and evaluation procedure.
+3. Reconstruct the experiment as a structured workflow.
+4. Assess published claims against available experimental evidence.
+5. Compare experiment versions and investigate differences.
+6. Generate transparent reports documenting findings and limitations.
+
+Actual reproducibility depends on the availability of data, code, dependencies, hardware, and sufficient experimental details.
+
+## Responsible Reporting
+
+CrisisGrid aims to distinguish verified findings from assumptions, missing evidence, and illustrative demonstrations. Demonstration data must not be presented as actual experimental verification.
+
+## Project Status
+
+CrisisGrid is under development. Features described in this README represent the project's intended direction and should not be interpreted as completed functionality unless implemented and tested.
+
+## Contributing
+
+Contributions that improve research transparency, experiment traceability, reproducibility, accessibility, and usability are welcome.
+
+## License
+
+A license has not yet been specified. Add a suitable license before distributing the project publicly.
