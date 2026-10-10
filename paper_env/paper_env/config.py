@@ -21,6 +21,8 @@ class Settings:
     min_free_disk_bytes: int = 512 * 1024 * 1024
     cache_max_bytes: int = 50 * 1024 * 1024 * 1024
     checkpoint_after_each_cell: bool = False
+    kernel_start_timeout_s: float = 90.0
+    interrupt_grace_s: float = 5.0  # after a timeout interrupt, how long before the kernel is killed
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir)
@@ -49,3 +51,6 @@ class Settings:
 
     def runs_dir(self, run_id: str) -> Path:
         return self.data_dir / "runs" / run_id
+
+    def kernels_dir(self) -> Path:
+        return self.data_dir / "kernels"

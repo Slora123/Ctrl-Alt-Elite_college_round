@@ -63,6 +63,7 @@ class PaperEnv(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
     env_spec_id: str
     current_notebook_version: int = 0
+    dataset_ids: list[str] = Field(default_factory=list)  # datasets every run of this paper needs
 
 
 class Cell(BaseModel):
@@ -76,6 +77,7 @@ class Cell(BaseModel):
     status: CellStatus = CellStatus.PENDING
     current_version_id: str | None = None
     input_warnings: list[str] = Field(default_factory=list)  # undeclared reads (best effort)
+    last_failure_kind: FailureKind | None = None  # distinguishes infra failures from cell exceptions
 
 
 class CellVersion(BaseModel):
@@ -113,6 +115,7 @@ class Run(BaseModel):
     failure_kind: FailureKind | None = None
     verification_eligible: bool = False  # True only for run_clean
     approximate_split: bool = False
+    kernel_session_id: str | None = None  # runs sharing a session share in-memory state
     dataset_manifests: list[dict[str, Any]] = Field(default_factory=list)
     message: str | None = None
 
@@ -130,6 +133,7 @@ class CellRun(BaseModel):
     failure_kind: FailureKind | None = None
     duration: float | None = None
     state_hash: str | None = None
+    blocked_action_id: str | None = None  # set when the pre-execute hook paused this cell
 
 
 class DatasetFile(BaseModel):

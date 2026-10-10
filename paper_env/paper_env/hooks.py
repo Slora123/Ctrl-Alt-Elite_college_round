@@ -65,10 +65,15 @@ class ActionGate:
     def __init__(self, hook: PreExecuteHook, uow_factory: UnitOfWorkFactory, bus: EventBus):
         self.hook, self._uow, self.bus = hook, uow_factory, bus
         self._executors: dict[ActionKind, Executor] = {}
+        self._deniers: dict[ActionKind, Executor] = {}
 
     def register_executor(self, kind: ActionKind, fn: Executor) -> None:
         """Services register how to carry out an approved action of ``kind``."""
         self._executors[kind] = fn
+
+    def register_on_deny(self, kind: ActionKind, fn: Executor) -> None:
+        """Called when a paused action of ``kind`` is finally denied, so owners can wind down cleanly."""
+        self._deniers[kind] = fn
 
     def check(self, action: Action) -> None:
         """Raise ``ActionBlocked`` (after persisting it) unless the hook allows."""
@@ -109,6 +114,8 @@ class ActionGate:
             }, paper_env_id=blocked.paper_env_id, run_id=blocked.run_id)
         self.bus.dispatch(ev)
         if not allowed:
+            if (denier := self._deniers.get(blocked.kind)) is not None:
+                denier(blocked)
             return None
         executor = self._executors.get(blocked.kind)
         if executor is None:

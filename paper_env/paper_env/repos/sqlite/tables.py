@@ -50,6 +50,7 @@ class PaperEnvRow(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     env_spec_id: Mapped[str] = mapped_column(ForeignKey("env_specs.id"))
     current_notebook_version: Mapped[int] = mapped_column(Integer)
+    dataset_ids: Mapped[list] = mapped_column(JSON)
 
 
 class CellRow(Base):
@@ -64,6 +65,7 @@ class CellRow(Base):
     status: Mapped[str] = mapped_column(String)
     current_version_id: Mapped[str | None] = mapped_column(String, nullable=True)
     input_warnings: Mapped[list] = mapped_column(JSON)
+    last_failure_kind: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class CellVersionRow(Base):
@@ -95,6 +97,7 @@ class RunRow(Base):
     failure_kind: Mapped[str | None] = mapped_column(String, nullable=True)
     verification_eligible: Mapped[bool] = mapped_column(Boolean)
     approximate_split: Mapped[bool] = mapped_column(Boolean)
+    kernel_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
     dataset_manifests: Mapped[list] = mapped_column(JSON)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -115,6 +118,7 @@ class CellRunRow(Base):
     failure_kind: Mapped[str | None] = mapped_column(String, nullable=True)
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
     state_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    blocked_action_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class DatasetRow(Base):

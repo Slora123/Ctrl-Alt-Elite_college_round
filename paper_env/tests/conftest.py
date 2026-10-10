@@ -101,3 +101,86 @@ def stack_factory(tmp_path, uow_factory):
     def make(**kw):
         return Stack(tmp_path, uow_factory, **kw)
     return make
+
+
+# ---------------------------------------------------------------- kernel stack
+import shutil  # noqa: E402
+
+from paper_env.backends import LocalBackend  # noqa: E402
+from paper_env.kernel.runner import KernelRunner  # noqa: E402
+from paper_env.repos.memory import memory_uow_factory  # noqa: E402
+from paper_env.services.notebook import NotebookService  # noqa: E402
+from paper_env.services.paper_envs import PaperEnvService  # noqa: E402
+from paper_env.services.runs import RunService  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def kernel_template(tmp_path_factory):
+    """One venv with ipykernel, built once per test session and copied per test."""
+    root = tmp_path_factory.mktemp("kernel_template")
+    st = Stack(root, memory_uow_factory(), kernel_packages=["ipykernel"])
+    st.settings.install_timeout_s = 600
+    env = st.new_paper_env(alias="template")
+    res = st.envs.create_env(env.id)
+    assert res.success, res
+    return {"venv": st.settings.venv_dir(env.id), "lockfile_hash": res.lockfile_hash}
+
+
+class KStack(Stack):
+    """Stack plus notebook/backend/runner/run services and a pre-built env copied from the template."""
+
+    def __init__(self, tmp_path, uow_factory, template, hook=None, **settings_kw):
+        super().__init__(tmp_path, uow_factory, hook=hook, kernel_packages=["ipykernel"])
+        for k, v in settings_kw.items():
+            setattr(self.settings, k, v)
+        self.settings.min_free_disk_bytes = 0
+        self.backend = LocalBackend(self.settings, self.scrubber)
+        self.notebook = NotebookService(uow_factory, self.bus)
+        self.runner = KernelRunner(self.settings, uow_factory, self.bus, self.gate, self.backend, self.notebook)
+        self.runs = RunService(self.settings, uow_factory, self.bus, self.gate, self.runner, self.notebook,
+                               self.envs, self.backend)
+        self.paper_envs = PaperEnvService(uow_factory, self.envs)
+        self.template = template
+
+    def new_ready_env(self, alias="p1", **spec_kw):
+        env = self.new_paper_env(alias=alias, **spec_kw)
+        shutil.copytree(self.template["venv"], self.settings.venv_dir(env.id), symlinks=True)
+        spec = self.spec(env)
+        spec.lockfile_hash = self.template["lockfile_hash"]
+        with self.uow() as u:
+            u.paper_envs.update_spec(spec)
+        return env
+
+    def add_cells(self, env, *sources, **kw):
+        from paper_env.domain import Author
+        return [self.notebook.add_cell(env.id, s, Author.HUMAN, **kw) for s in sources]
+
+    def cell(self, cell_id):
+        return self.notebook.get_cell(cell_id)
+
+    def cell_runs(self, run):
+        return self.runs.cell_runs(run.id)
+
+    def close(self):
+        self.runner.shutdown()
+        self.backend.shutdown_all()
+
+
+@pytest.fixture
+def kstack(tmp_path, kernel_template):
+    st = KStack(tmp_path, memory_uow_factory(), kernel_template)
+    yield st
+    st.close()
+
+
+@pytest.fixture
+def kstack_factory(tmp_path, kernel_template):
+    made = []
+
+    def make(uow_factory=None, hook=None, **kw):
+        st = KStack(tmp_path, uow_factory or memory_uow_factory(), kernel_template, hook=hook, **kw)
+        made.append(st)
+        return st
+    yield make
+    for st in made:
+        st.close()

@@ -9,10 +9,14 @@ dependencies = [
     "alembic>=1.13",
     "packaging>=26.3",
     "httpx>=0.28.1",
+    "jupyter-client>=8.10.0",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "pytest-timeout>=2.4.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -24,3 +28,4 @@ packages = ["paper_env"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+timeout = 180
