@@ -59,6 +59,21 @@ class Scrubber:
             text = p.sub(REDACTED, text)
         return _KV.sub(lambda m: f"{m.group('k')}{m.group('q')}{REDACTED}{m.group('q')}", text)
 
+    _TOKENISH_TAIL = re.compile(r"[A-Za-z0-9_-]{8,}$")
+
+    def might_end_mid_secret(self, text: str) -> bool:
+        """True if ``text`` could be the beginning of a secret that has not fully arrived yet, so it must not be
+        shown/stored until more data (or the end of the line) is known."""
+        if self._TOKENISH_TAIL.search(text):
+            return True
+        with self._lock:
+            secrets = list(self._secrets)
+        for sec in secrets:
+            for k in range(min(len(sec) - 1, len(text)), 0, -1):
+                if text.endswith(sec[:k]):
+                    return True
+        return False
+
     def scrub_obj(self, obj: Any) -> Any:
         """Recursively scrub strings in JSON-like data (dict keys are kept)."""
         if isinstance(obj, str):

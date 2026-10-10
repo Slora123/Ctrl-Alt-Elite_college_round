@@ -63,7 +63,7 @@ class OutputRecorder:
                     line = line[-_HOLD_BACK:]
         self._buf[name] = line
         self._cr_mode[name] = progress
-        if progress and line:  # progress-bar mode: show the current state right away
+        if progress and line and not self.scrubber.might_end_mid_secret(line):  # progress mode: show the current state now
             emits.append((self.scrubber.scrub(line), True))
         return emits
 
