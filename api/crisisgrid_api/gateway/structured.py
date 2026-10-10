@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -38,7 +38,7 @@ def schema_instruction(output_type: type[BaseModel]) -> str:
 
 
 def run_structured(gateway: Gateway, guard: HarnessGuard, stage: str, agent: str, messages: list[Message],
-                   output_type: type[T], *, run_id: str | None = None) -> T:
+                   output_type: type[T], *, run_id: str | None = None, context: dict[str, Any] | None = None) -> T:
     """Call the model and return a validated `output_type`. Raises EscalationRequired when the guard says stop."""
     msgs = [*messages, Message(role="system", content=schema_instruction(output_type))]
     guard.reset_validation(stage)
@@ -48,7 +48,7 @@ def run_structured(gateway: Gateway, guard: HarnessGuard, stage: str, agent: str
         if not d.ok:
             raise EscalationRequired(d.reason)
         try:
-            return output_type.model_validate(extract_json(resp.text))
+            return output_type.model_validate(extract_json(resp.text), context=context)
         except (ValidationError, ValueError) as e:  # json.JSONDecodeError is a ValueError
             gateway.evict(agent, msgs)  # never serve this invalid reply from the cache again
             d = guard.record_validation_failure(stage)

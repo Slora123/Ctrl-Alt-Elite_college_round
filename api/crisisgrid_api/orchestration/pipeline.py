@@ -23,6 +23,7 @@ from crisisgrid_core.verifier import verify_claim
 from ..agents.artifact_finder import RepoFetcher, find_artifacts
 from ..agents.gap_auditor import GapAuditorAgent
 from ..agents.paper_parser import PaperParserAgent
+from ..agents.report_writer import ReportWriterAgent
 from ..gateway.gateway import Gateway
 from ..gateway.types import AllProvidersFailed
 from ..ingest.embed import Embedder
@@ -59,6 +60,7 @@ class PipelineDeps:
     events: EventStore
     guard_config: HarnessConfig = field(default_factory=HarnessConfig)
     jobs: JobService | None = None  # None: no execution (Tier 1 only)
+    narrative: bool = False  # ask the Report writer for a short summary (one extra model call)
 
 
 class Orchestrator:
@@ -339,7 +341,17 @@ class Orchestrator:
         return "report"
 
     def _node_report(self, state: RunState, guard: HarnessGuard) -> Step:
-        state.report = build_report(state)
+        summary = None
+        if self.d.narrative and state.verdicts and state.parsed is not None:
+            try:
+                writer = ReportWriterAgent(self.d.gateway, guard)
+                summary = writer.write(state.parsed.claims, state.verdicts, state.gaps, run_id=state.run_id)
+            except (EscalationRequired, AllProvidersFailed) as e:
+                # the summary is optional; the deterministic report below already states every number. Say it is missing.
+                note = f"The narrative summary was omitted: the writer could not produce one consistent with the evidence ({e})."
+                if note not in state.caveats:
+                    state.caveats.append(note)
+        state.report = build_report(state, summary=summary)
         return "final_gate"
 
     def _node_final_gate(self, state: RunState, guard: HarnessGuard) -> Step:

@@ -2,13 +2,17 @@
 The full evidence report (attribution, agent-edit deviations, PDF export) is P8."""
 from __future__ import annotations
 
+from crisisgrid_core.report_check import render_deviations
+
 from .models import RunState
 
 
-def build_report(state: RunState) -> str:
+def build_report(state: RunState, summary: str | None = None) -> str:
     ran = state.execution == "clean_runs"
     title = f"Tier {state.route.tier}" if ran and state.route else "Tier 1: static audit only"
     L: list[str] = [f"# CrisisGrid report ({title})", ""]
+    if summary:
+        L += ["## Summary", "", summary, "", "_Every number in this summary was checked against the measured evidence below._", ""]
     if state.needs_ocr:
         L += ["**The PDF has no extractable text (scanned?).** Nothing was analysed. Provide a text PDF or enable OCR.", ""]
     if state.parsed:
@@ -41,6 +45,8 @@ def build_report(state: RunState) -> str:
               f"- Weights: {', '.join(inv.weights_urls) or 'none found'}"]
         if inv.missing_components:
             L.append(f"- Missing: {', '.join(inv.missing_components)}")
+    if ran:
+        L += ["", "## Deviations from the paper", "", render_deviations([])]  # nothing in the pipeline edits code yet (repair loop: P7)
     L += ["", "## Limits of this report", ""]
     if ran:
         L.append(f"- {len(state.run_results)} clean run(s) (fresh process, fixed seed, top to bottom) were executed; "
