@@ -191,6 +191,29 @@ def restart_kernel(paper_env_id: str, app: App = A):
     return {"session_id": s.id, "note": "all executed cells are now stale"}
 
 
+# ------------------------------------------------------------------ editor / interactivity
+@router.post("/paper-envs/{paper_env_id}/kernel/complete")
+def kernel_complete(paper_env_id: str, body: S.CodePos, app: App = A):
+    return app.runner.complete(paper_env_id, body.code, body.cursor_pos)
+
+
+@router.post("/paper-envs/{paper_env_id}/kernel/inspect")
+def kernel_inspect(paper_env_id: str, body: S.CodePos, app: App = A):
+    return app.runner.inspect(paper_env_id, body.code, body.cursor_pos)
+
+
+@router.post("/paper-envs/{paper_env_id}/kernel/input", status_code=204)
+def kernel_input(paper_env_id: str, body: S.InputReq, app: App = A):
+    """Answer an ``input_requested`` event."""
+    app.runner.provide_input(paper_env_id, body.text)
+
+
+@router.post("/paper-envs/{paper_env_id}/kernel/comm", status_code=204)
+def kernel_comm(paper_env_id: str, body: S.CommReq, app: App = A):
+    """Frontend -> kernel widget traffic (kernel -> frontend arrives as ephemeral ``comm_message`` events)."""
+    app.runner.comm_send(paper_env_id, body.msg_type, body.content, body.buffers)
+
+
 # ------------------------------------------------------------------ datasets
 @router.post("/datasets", status_code=201)
 def register_dataset(body: S.RegisterDataset, app: App = A):

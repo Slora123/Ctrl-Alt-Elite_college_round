@@ -104,3 +104,18 @@ class ResumeReq(BaseModel):
 class ResolveBlocked(BaseModel):
     decision: Literal["allow", "deny"]
     reason: str = ""
+
+
+class CodePos(BaseModel):
+    code: str
+    cursor_pos: int
+
+
+class CommReq(BaseModel):
+    msg_type: Literal["comm_open", "comm_msg", "comm_close"] = "comm_msg"
+    content: dict[str, Any]
+    buffers: list[str] = Field(default_factory=list)  # base64
+
+
+class InputReq(BaseModel):
+    text: str

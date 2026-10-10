@@ -63,6 +63,14 @@ class EventBus:
         self.dispatch(event)
         return event
 
+    def emit_ephemeral(self, type: EventType, payload: dict[str, Any], *, paper_env_id: str | None = None,
+                       run_id: str | None = None) -> Event:
+        """Deliver to subscribers WITHOUT persisting (``seq`` stays None). For high-volume transient traffic such as
+        widget updates; consumers must not rely on replaying it."""
+        ev = self.make(type, payload, paper_env_id=paper_env_id, run_id=run_id)
+        self.dispatch(ev)
+        return ev
+
     def dispatch(self, event: Event) -> None:
         with self._lock:
             subs = [s for s in self._subs if s.matches(event)]

@@ -15,6 +15,8 @@ from ..services.checkpoints import CheckpointError
 from ..services.files import TooLarge, UnsafePath
 from ..services.notebook import CellBusy
 from ..services.runs import EnvNotReady, RunInProgress
+from ..kernel.runner import SessionError
+from ..backends import BackendError
 from ..datasets import DatasetNotAvailable
 
 
@@ -46,6 +48,6 @@ def install_error_handlers(api: FastAPI) -> None:
         return handler
 
     for exc, status in ((NotFound, 404), (FileNotFoundError, 404), (Conflict, 409), (CellBusy, 409),
-                        (RunInProgress, 409), (EnvNotReady, 409), (CheckpointError, 409),
+                        (RunInProgress, 409), (SessionError, 409), (BackendError, 409), (EnvNotReady, 409), (CheckpointError, 409),
                         (DatasetNotAvailable, 409), (TooLarge, 413), (UnsafePath, 422), (InvalidSpec, 422), (ValueError, 422)):
         api.add_exception_handler(exc, mk(status))

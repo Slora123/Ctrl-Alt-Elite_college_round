@@ -67,7 +67,23 @@ class ExecInfraFailure:
     exit_code: int | None = None
 
 
-ExecEvent = Union[ExecOutput, ExecDisplay, ExecError, ExecFinished, ExecInfraFailure]
+@dataclass
+class ExecInputRequest:
+    """The cell called input(): the run is waiting until ``provide_input`` is called (or the cell times out)."""
+    prompt: str
+    password: bool = False
+
+
+@dataclass
+class CommEvent:
+    """Jupyter comm traffic (ipywidgets) from the kernel; ``buffers`` are base64 strings."""
+    msg_type: str  # comm_open | comm_msg | comm_close
+    content: dict[str, Any]
+    buffers: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+ExecEvent = Union[ExecOutput, ExecDisplay, ExecError, ExecFinished, ExecInfraFailure, ExecInputRequest]
 
 
 class ComputeBackend(Protocol):
@@ -78,3 +94,9 @@ class ComputeBackend(Protocol):
     def restore(self, handle: RuntimeHandle, ref: CheckpointRef) -> dict[str, Any]: ...
     def teardown(self, handle: RuntimeHandle) -> None: ...
     def capabilities(self) -> dict[str, Any]: ...  # gpu, network, max_runtime, cost_per_hr
+    # editor / interactivity extensions
+    def complete(self, handle: RuntimeHandle, code: str, cursor_pos: int) -> dict[str, Any]: ...
+    def inspect(self, handle: RuntimeHandle, code: str, cursor_pos: int) -> dict[str, Any]: ...
+    def provide_input(self, handle: RuntimeHandle, text: str) -> None: ...
+    def on_comm(self, handle: RuntimeHandle, callback: Any) -> None: ...  # callback(CommEvent)
+    def comm_send(self, handle: RuntimeHandle, msg_type: str, content: dict[str, Any], buffers: list[str] | None = None) -> None: ...

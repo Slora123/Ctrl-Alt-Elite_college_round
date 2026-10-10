@@ -102,6 +102,8 @@ class EventType(StrEnum):
     KERNEL_DIED = "kernel_died"
     RUN_STARTED = "run_started"
     RUN_FINISHED = "run_finished"
+    INPUT_REQUESTED = "input_requested"
+    COMM_MESSAGE = "comm_message"  # ephemeral (not persisted): widget traffic
     ACTION_BLOCKED = "action_blocked"
     ACTION_RESOLVED = "action_resolved"
     CHECKPOINT_SAVED = "checkpoint_saved"

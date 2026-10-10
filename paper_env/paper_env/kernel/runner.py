@@ -24,6 +24,7 @@ from ..config import Settings
 from ..domain import (
     ActionKind, BlockedAction, Cell, CellRun, CellStatus, ErrorInfo, EventType, FailureKind, Run, utcnow,
 )
+from ..backends import ExecInputRequest
 from ..events import EventBus
 from ..hooks import Action, ActionBlocked, ActionGate
 from ..repos import UnitOfWorkFactory
@@ -85,6 +86,9 @@ class KernelRunner:
         except BackendError as e:
             raise SessionError(str(e)) from e
         s = Session(id=uuid.uuid4().hex[:12], paper_env_id=paper_env_id, handle=handle, seed=seed)
+        self.backend.on_comm(handle, lambda ev, pid=paper_env_id: self.bus.emit_ephemeral(
+            EventType.COMM_MESSAGE, {"msg_type": ev.msg_type, "content": ev.content, "buffers": ev.buffers,
+                                     "metadata": ev.metadata}, paper_env_id=pid))
         with self._guard:
             self.sessions[paper_env_id] = s
         return s
@@ -107,6 +111,24 @@ class KernelRunner:
             "op": "kernel_restart", "session_id": s.id, "stale_cells": stale,
             "note": "kernel restarted; all executed cells are stale"}, paper_env_id=paper_env_id)
         return s
+
+    def _live(self, paper_env_id: str) -> Session:
+        s = self.sessions.get(paper_env_id)
+        if s is None or not s.alive:
+            raise SessionError("no live kernel; run a cell first")
+        return s
+
+    def provide_input(self, paper_env_id: str, text: str) -> None:
+        self.backend.provide_input(self._live(paper_env_id).handle, text)
+
+    def complete(self, paper_env_id: str, code: str, cursor_pos: int) -> dict[str, Any]:
+        return self.backend.complete(self._live(paper_env_id).handle, code, cursor_pos)
+
+    def inspect(self, paper_env_id: str, code: str, cursor_pos: int) -> dict[str, Any]:
+        return self.backend.inspect(self._live(paper_env_id).handle, code, cursor_pos)
+
+    def comm_send(self, paper_env_id: str, msg_type: str, content: dict[str, Any], buffers: list[str] | None = None) -> None:
+        self.backend.comm_send(self._live(paper_env_id).handle, msg_type, content, buffers)
 
     def interrupt(self, paper_env_id: str) -> bool:
         s = self.sessions.get(paper_env_id)
@@ -190,6 +212,10 @@ class KernelRunner:
                     error = parse_traceback(source, ev.ename, ev.evalue, ev.traceback)
                 elif isinstance(ev, ExecFinished):
                     final = ev.status
+                elif isinstance(ev, ExecInputRequest):
+                    self.bus.publish(EventType.INPUT_REQUESTED, {
+                        "cell_id": cell.id, "cell_run_id": cr.id, "prompt": ev.prompt, "password": ev.password},
+                        paper_env_id=run.paper_env_id, run_id=run.id)
                 elif isinstance(ev, ExecInfraFailure):
                     infra = ev
                 if rec.limit_exceeded and not interrupted_for_limit and final is None:

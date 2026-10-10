@@ -1,6 +1,7 @@
 """Local compute backend: one ipykernel process per runtime, using the PaperEnv's own interpreter."""
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -22,8 +23,8 @@ from ..domain import EnvSpec
 from ..env.hardware import collect_hardware_info
 from ..security import Scrubber
 from .base import (
-    BackendError, CheckpointRef, ExecDisplay, ExecError, ExecEvent, ExecFinished, ExecInfraFailure,
-    ExecOutput, RuntimeHandle,
+    BackendError, CheckpointRef, CommEvent, ExecDisplay, ExecError, ExecEvent, ExecFinished, ExecInfraFailure,
+    ExecInputRequest, ExecOutput, RuntimeHandle,
 )
 
 log = logging.getLogger(__name__)
@@ -56,6 +57,11 @@ class _Runtime:
     interrupt_requested: bool = False
     dead: bool = False
     registry_file: Path | None = None
+    waiters: dict[str, "queue.Queue"] = field(default_factory=dict)  # msg_id -> iopub messages for that execution
+    comm_cbs: list = field(default_factory=list)
+    stop: threading.Event = field(default_factory=threading.Event)
+    shell_lock: threading.Lock = field(default_factory=threading.Lock)
+    reader: threading.Thread | None = None
 
 
 class LocalBackend:
@@ -110,6 +116,8 @@ class LocalBackend:
         reg.write_text(json.dumps({"id": hid, "pid": proc.pid, "owner_pid": os.getpid(),
                                    "paper_env_id": paper_env_id, "started": time.time()}))
         rt.registry_file = reg
+        rt.reader = threading.Thread(target=self._reader, args=(rt,), daemon=True, name=f"iopub-{hid}")
+        rt.reader.start()
         with self._guard:
             self._rts[hid] = rt
         boot = (f"import sys; sys.path.insert(0, {str(rt_dir)!r}); import _paper_env_rt as _pe; "
@@ -132,6 +140,7 @@ class LocalBackend:
         with self._guard:
             rt = self._rts.pop(handle.id, None)
         if rt is not None:
+            rt.stop.set()
             try:
                 rt.kc.stop_channels()
             except Exception:
@@ -186,6 +195,78 @@ class LocalBackend:
             shutil.rmtree(self.settings.kernels_dir() / info["id"], ignore_errors=True)
         return killed
 
+    # ------------------------------------------------------------------ iopub reader
+    def _reader(self, rt: _Runtime) -> None:
+        """The single consumer of the iopub channel. Execution messages go to the waiting execute() call;
+        comm traffic (ipywidgets) always goes to the comm listeners, in arrival order, even when no cell runs."""
+        while not rt.stop.is_set():
+            try:
+                msg = rt.kc.get_iopub_msg(timeout=0.2)
+            except queue.Empty:
+                continue
+            except Exception:
+                break
+            mt = msg["msg_type"]
+            if mt in ("comm_open", "comm_msg", "comm_close"):
+                ev = CommEvent(mt, msg["content"], [base64.b64encode(bytes(b)).decode() for b in msg.get("buffers", [])],
+                               msg.get("metadata", {}))
+                for cb in list(rt.comm_cbs):
+                    try:
+                        cb(ev)
+                    except Exception:
+                        log.exception("comm listener failed")
+                continue
+            q = rt.waiters.get(msg["parent_header"].get("msg_id"))
+            if q is not None:
+                q.put(msg)
+
+    def on_comm(self, handle: RuntimeHandle, callback: Any) -> None:
+        rt = self._rts.get(handle.id)
+        if rt is not None:
+            rt.comm_cbs.append(callback)
+
+    def comm_send(self, handle: RuntimeHandle, msg_type: str, content: dict[str, Any],
+                  buffers: list[str] | None = None) -> None:
+        rt = self._rts.get(handle.id)
+        if rt is None or rt.dead:
+            raise BackendError("runtime is not available")
+        if msg_type not in ("comm_open", "comm_msg", "comm_close"):
+            raise BackendError(f"unsupported comm message type {msg_type!r}")
+        bufs = [base64.b64decode(b) for b in (buffers or [])]
+        rt.kc.session.send(rt.kc.shell_channel.socket, msg_type, content, buffers=bufs)
+
+    def provide_input(self, handle: RuntimeHandle, text: str) -> None:
+        rt = self._rts.get(handle.id)
+        if rt is None or rt.dead:
+            raise BackendError("runtime is not available")
+        rt.kc.input(text)
+
+    def _shell_request(self, handle: RuntimeHandle, send, timeout: float = 3.0) -> dict[str, Any]:
+        rt = self._rts.get(handle.id)
+        if rt is None or rt.dead:
+            raise BackendError("runtime is not available")
+        with rt.shell_lock:
+            msg_id = send(rt.kc)
+            end = time.monotonic() + timeout
+            while time.monotonic() < end:
+                try:
+                    reply = rt.kc.get_shell_msg(timeout=0.2)
+                except queue.Empty:
+                    continue
+                if reply["parent_header"].get("msg_id") == msg_id:
+                    return reply["content"]
+        return {"status": "timeout"}  # e.g. the kernel is busy running a cell
+
+    def complete(self, handle: RuntimeHandle, code: str, cursor_pos: int) -> dict[str, Any]:
+        c = self._shell_request(handle, lambda kc: kc.complete(code, cursor_pos))
+        return {"matches": c.get("matches", []), "cursor_start": c.get("cursor_start", cursor_pos),
+                "cursor_end": c.get("cursor_end", cursor_pos), "status": c.get("status", "ok"),
+                "metadata": c.get("metadata", {})}
+
+    def inspect(self, handle: RuntimeHandle, code: str, cursor_pos: int) -> dict[str, Any]:
+        c = self._shell_request(handle, lambda kc: kc.inspect(code, cursor_pos, detail_level=0))
+        return {"found": bool(c.get("found")), "data": c.get("data", {}), "status": c.get("status", "ok")}
+
     # ------------------------------------------------------------------ execution
     def execute(self, handle: RuntimeHandle, cell_code: str, timeout: float, *, internal: bool = False,
                 **_: Any) -> Iterator[ExecEvent]:
@@ -206,10 +287,18 @@ class LocalBackend:
     def _execute_locked(self, rt: _Runtime, code: str, timeout: float, internal: bool) -> Iterator[ExecEvent]:
         rt.interrupt_requested = False
         try:
-            msg_id = rt.kc.execute(code, store_history=not internal, allow_stdin=False, stop_on_error=False)
+            msg_id = rt.kc.execute(code, store_history=not internal, allow_stdin=not internal, stop_on_error=False)
         except Exception as e:
             yield ExecInfraFailure("backend_error", f"could not submit code: {type(e).__name__}")
             return
+        q: "queue.Queue" = queue.Queue()
+        rt.waiters[msg_id] = q
+        try:
+            yield from self._consume(rt, msg_id, q, timeout)
+        finally:
+            rt.waiters.pop(msg_id, None)
+
+    def _consume(self, rt: _Runtime, msg_id: str, q: "queue.Queue", timeout: float) -> Iterator[ExecEvent]:
         deadline = time.monotonic() + timeout
         timed_out = False
         saw_error = False
@@ -228,13 +317,17 @@ class LocalBackend:
                     "it was killed and in-memory state is lost"), rt.proc.poll())
                 return
             try:
-                msg = rt.kc.get_iopub_msg(timeout=0.2)
+                sin = rt.kc.get_stdin_msg(timeout=0)
+                if sin["msg_type"] == "input_request":
+                    yield ExecInputRequest(sin["content"].get("prompt", ""), bool(sin["content"].get("password")))
+            except queue.Empty:
+                pass
+            try:
+                msg = q.get(timeout=0.2)
             except queue.Empty:
                 if rt.proc.poll() is not None:
                     yield self._dead_event(rt)
                     return
-                continue
-            if msg["parent_header"].get("msg_id") != msg_id:
                 continue
             mt, c = msg["msg_type"], msg["content"]
             if mt == "stream":

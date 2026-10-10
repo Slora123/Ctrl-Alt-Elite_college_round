@@ -116,6 +116,18 @@ class ActionResolvedP(_P):
     reason: str = ""
 
 
+class InputRequestedP(_P):
+    cell_id: str
+    cell_run_id: str
+    prompt: str = ""
+    password: bool = False
+
+
+class CommMessageP(_P):
+    msg_type: Literal["comm_open", "comm_msg", "comm_close"]
+    content: dict[str, Any]
+
+
 class CheckpointP(_P):
     checkpoint_id: str
 
@@ -130,6 +142,7 @@ PAYLOADS: dict[EventType, type[_P]] = {
     EventType.CELL_EDITED: CellEditedP, EventType.ENV_CHANGED: EnvChangedP,
     EventType.ENV_INSTALL_FAILED: EnvInstallFailedP, EventType.KERNEL_DIED: KernelDiedP,
     EventType.RUN_STARTED: RunStartedP, EventType.RUN_FINISHED: RunFinishedP,
+    EventType.INPUT_REQUESTED: InputRequestedP, EventType.COMM_MESSAGE: CommMessageP,
     EventType.ACTION_BLOCKED: ActionBlockedP, EventType.ACTION_RESOLVED: ActionResolvedP,
     EventType.CHECKPOINT_SAVED: CheckpointP, EventType.CHECKPOINT_RESTORED: CheckpointP,
     EventType.DATASET_FETCH_STARTED: DatasetP, EventType.DATASET_FETCH_PROGRESS: DatasetP,
