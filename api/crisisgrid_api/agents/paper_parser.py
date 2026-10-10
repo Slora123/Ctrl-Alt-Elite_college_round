@@ -59,12 +59,14 @@ class PaperParserAgent:
             out.append(f"[pages {c.page_start}-{c.page_end}] {c.text}")
         return "\n\n".join(out)
 
-    def parse(self, pages: list[str], *, run_id: str | None = None) -> ParsedPaper:
+    def parse(self, pages: list[str], *, run_id: str | None = None, hint: str | None = None) -> ParsedPaper:
         full_text = "\n\n".join(pages)
         msgs = [
             Message(role="system", content=SYSTEM_RULES + "\n" + INSTRUCTIONS),
             Message(role="user", content=untrusted_block("paper", self.context(pages))),
         ]
+        if hint:
+            msgs.append(Message(role="user", content=f"Reviewer hint (from the human operator; schema and quotes still apply): {hint}"))
         self.guard.start_stage("understand")
         parsed = run_structured(self.gateway, self.guard, "understand", "paper_parser", msgs, ParsedPaper, run_id=run_id)
         return enforce_sources(parsed, full_text)  # quotes are checked against the WHOLE paper, not just the excerpt

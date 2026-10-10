@@ -153,3 +153,10 @@ def test_guard_blocks_claims_for_executor_agents(agent):
 @pytest.mark.parametrize("agent", ["claim_verifier", "report_writer"])
 def test_guard_allows_claims_for_verifier_and_reporter(agent):
     HarnessGuard().check_agent_deps(agent, Deps(extra={"c": claim()}))
+
+
+def test_reset_validation_gives_a_fresh_retry():
+    g = HarnessGuard()
+    assert g.record_validation_failure("parse").action == "retry"
+    g.reset_validation("parse")
+    assert g.record_validation_failure("parse").action == "retry"

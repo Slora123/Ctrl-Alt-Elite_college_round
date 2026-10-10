@@ -13,6 +13,9 @@ class InMemoryCache:
     def set(self, key: str, value: LLMResponse) -> None:
         self._d[key] = value
 
+    def delete(self, key: str) -> None:
+        self._d.pop(key, None)
+
 
 class InMemoryAuditLog:
     def __init__(self) -> None:

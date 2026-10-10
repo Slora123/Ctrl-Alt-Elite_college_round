@@ -84,6 +84,14 @@ class Gateway:
                            "n": max_tokens}, sort_keys=True)
         return hashlib.sha256(blob.encode()).hexdigest()
 
+    def evict(self, agent: str, messages: list[Message], *, temperature: float | None = None, max_tokens: int | None = None) -> None:
+        """Forget a cached answer, e.g. one that turned out not to validate, so a retry is not served the same bad reply."""
+        prof = self.profile(agent)
+        temp = prof.temperature if temperature is None else temperature
+        maxt = prof.max_tokens if max_tokens is None else max_tokens
+        chain = [f"{p.name}:{p.model}" for p in self._chain(prof)]
+        self.cache.delete(self._cache_key(agent, chain, messages, temp, maxt))
+
     def _backoff(self, attempt: int) -> float:
         return self._rng.uniform(0, min(self._cap, self._base * 2**attempt))  # full jitter
 

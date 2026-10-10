@@ -29,14 +29,18 @@ class GapAuditorAgent:
         self.gateway, self.guard = gateway, guard
 
     def audit(self, parsed: ParsedPaper, inventory: ArtifactInventory, text: str, *, run_id: str | None = None,
-              max_context_chars: int = 20_000) -> list[Gap]:
+              max_context_chars: int = 20_000, hint: str | None = None) -> list[Gap]:
         rule_gaps = run_rules(AuditInput(parsed, inventory, text))
         known = "\n".join(f"- {g.field}: {g.description}" for g in rule_gaps) or "(none)"
+        # claim ids are random per parse; leave them out so an identical paper yields an identical (cacheable) prompt
+        setup = parsed.model_dump_json(exclude={"dropped": True, "claims": {"__all__": {"id"}}})
         msgs = [
             Message(role="system", content=SYSTEM_RULES + "\n" + INSTRUCTIONS),
-            Message(role="user", content="Known gaps:\n" + known + "\n\nParsed setup:\n" + parsed.model_dump_json(exclude={"dropped"})),
+            Message(role="user", content="Known gaps:\n" + known + "\n\nParsed setup:\n" + setup),
             Message(role="user", content=untrusted_block("paper", text[:max_context_chars])),
         ]
+        if hint:
+            msgs.append(Message(role="user", content=f"Reviewer hint (from the human operator): {hint}"))
         self.guard.start_stage("audit")
         result = run_structured(self.gateway, self.guard, "audit", "gap_auditor", msgs, GapList, run_id=run_id)
         return merge_gaps(rule_gaps, result.gaps)

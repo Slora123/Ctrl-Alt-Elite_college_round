@@ -8,16 +8,19 @@ from fastapi import FastAPI, Response
 from sqlalchemy import Engine, text
 
 from .config import Settings
+from .container import AppContainer, build_container
 from .db.base import make_engine
 from .logging import configure_logging
+from .routes import build_router
 
 log = logging.getLogger("crisisgrid.api")
 
 
-def create_app(settings: Settings | None = None, engine: Engine | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, engine: Engine | None = None, container: AppContainer | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     configure_logging(settings.log_level)
     engine = engine or make_engine(settings.database_url)
+    container = container or build_container(engine, settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -28,6 +31,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     app = FastAPI(title="CrisisGrid API", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.engine = engine
+    app.state.container = container
+    app.include_router(build_router(container))
 
     @app.get("/health")
     def health(response: Response) -> dict[str, Any]:

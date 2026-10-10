@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,3 +42,41 @@ class LLMCallRow(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (Index("ix_llm_calls_run_id", "run_id"),)
+
+
+class PaperRow(Base):
+    __tablename__ = "papers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    paper_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pdf: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)  # TODO: S3 (MinIO) once the storage layer exists
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PipelineRunRow(Base):
+    __tablename__ = "pipeline_runs"
+
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    paper_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    node: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[dict[str, Any]] = mapped_column(_JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class GateRow(Base):
+    __tablename__ = "gates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    context: Mapped[dict[str, Any]] = mapped_column(_JSON, nullable=False)
+    allowed_actions: Mapped[list[Any]] = mapped_column(_JSON, nullable=False)
+    action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    response: Mapped[dict[str, Any] | None] = mapped_column(_JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

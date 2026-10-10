@@ -173,6 +173,10 @@ class HarnessGuard:
             return GuardDecision(action="escalate", reason=f"invalid structured output in {stage} after {n - 1} retry")
         return GuardDecision(action="retry", reason="invalid structured output; retrying once")
 
+    def reset_validation(self, stage: str) -> None:
+        """Each fresh attempt at a stage (e.g. after a human retry) gets its own single validation retry."""
+        self._validation_failures.pop(stage, None)
+
     # firewall -------------------------------------------------------------------------------------------------
     def check_agent_deps(self, agent: str, deps: Any) -> None:
         """Repair firewall: executor agents never receive claims or reported values."""
