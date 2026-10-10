@@ -24,7 +24,9 @@ def test_health_reports_applied_migration(migrated_url):
     with TestClient(app) as c:
         r = c.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "db": "ok", "migration": "0004"}
+    body = r.json()
+    assert (body["status"], body["db"], body["migration"]) == ("ok", "ok", "0005")
+    assert body["paper_env"] is False  # the suite runs without mounting the notebook environment
 
 
 def test_health_without_migration_is_ok_but_unmigrated(db_url):

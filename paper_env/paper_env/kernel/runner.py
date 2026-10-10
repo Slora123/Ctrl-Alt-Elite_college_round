@@ -90,7 +90,7 @@ class KernelRunner:
 
     def start_session(self, paper_env_id: str, seed: int, **provision_opts: Any) -> Session:
         """Fresh kernel (replacing any existing one). Raises SessionError if the backend cannot provide one."""
-        self.shutdown(paper_env_id)
+        self.shutdown(paper_env_id, keep_userdata=True)  # the caller just wrote the granted-secrets file for the NEW kernel
         with self._uow() as u:
             env = u.paper_envs.get(paper_env_id)
             spec = u.paper_envs.get_spec(env.env_spec_id)
@@ -161,12 +161,13 @@ class KernelRunner:
         s.backend.interrupt(s.handle)
         return True
 
-    def shutdown(self, paper_env_id: str | None = None) -> None:
+    def shutdown(self, paper_env_id: str | None = None, *, keep_userdata: bool = False) -> None:
         ids = [paper_env_id] if paper_env_id else list(self.sessions)
         for pid in ids:
             with self._guard:
                 s = self.sessions.pop(pid, None)
-            (self.settings.env_dir(pid) / "userdata.json").unlink(missing_ok=True)  # granted secrets leave with the kernel
+            if not keep_userdata:
+                (self.settings.env_dir(pid) / "userdata.json").unlink(missing_ok=True)  # granted secrets leave with the kernel
             if s:
                 s.backend.teardown(s.handle)
 

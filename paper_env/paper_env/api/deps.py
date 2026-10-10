@@ -74,6 +74,13 @@ def visible_env_ids(core: App, p: Principal) -> set[str] | None:
     return {e.id for e in core.paper_envs.list() if can_see(p, e.owner_id)}
 
 
+def check_env_access(core: App, p: Principal, env_id: str) -> None:
+    """403 unless ``p`` may touch the paper environment (404 if it does not exist). For ids that arrive in a request BODY,
+    which the router-level path-parameter check cannot see."""
+    if not can_see(p, core.paper_envs.get(env_id).owner_id):
+        raise HTTPException(403, "this paper environment belongs to another user")
+
+
 async def authorize(conn: HTTPConnection) -> Principal:
     """Router-level dependency for every route: authentication, role (viewers are read-only) and ownership of the
     paper environment being touched. Sets the principal for the request (used for per-user secrets)."""

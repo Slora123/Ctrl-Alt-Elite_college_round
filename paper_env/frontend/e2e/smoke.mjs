@@ -2,12 +2,14 @@
 // Usage: node e2e/smoke.mjs   (env: BASE, CHROME)
 import puppeteer from 'puppeteer-core';
 
-const BASE = process.env.BASE || 'http://127.0.0.1:8000';
+const BASE = process.env.BASE || 'http://127.0.0.1:8765';      // origin
+const PREFIX = process.env.PREFIX || '';                        // '' standalone, '/cg/paper-env' behind the website proxy
+const TOKEN = process.env.TOKEN || '';                          // bearer token when authentication is on
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const results = [];
 const check = (name, ok, detail = '') => { results.push([name, ok]); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok ? '' : '  -> ' + detail}`); };
 const api = async (method, path, body) => {
-  const r = await fetch(BASE + path, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(BASE + PREFIX + path, { method, headers: { 'content-type': 'application/json', ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const t = await r.text(); const j = t ? JSON.parse(t) : null; if (!r.ok) throw new Error(`${method} ${path}: ${r.status} ${t}`); return j;
 };
 
@@ -36,7 +38,8 @@ page.on('console', m => { if (m.type() === 'error' && !/404/.test(m.text())) err
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const waitFor = async (fn, what, t = 40000, ...args) => { try { await page.waitForFunction(fn, { timeout: t }, ...args); return true; } catch { return false; } };
 
-await page.goto(BASE + '/', { waitUntil: 'networkidle2' });
+if (TOKEN) await page.evaluateOnNewDocument(t => localStorage.setItem('cg.token', t), TOKEN);  // the website's login token, same origin
+await page.goto(BASE + PREFIX + '/', { waitUntil: 'networkidle2' });
 check('root redirects to the built app (/ui/)', page.url().includes('/ui/'), page.url());
 await page.evaluate(id => { localStorage.setItem('envId', id); }, pid);
 await page.reload({ waitUntil: 'networkidle2' });

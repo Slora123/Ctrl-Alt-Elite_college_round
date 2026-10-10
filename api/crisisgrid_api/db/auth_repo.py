@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 
@@ -9,14 +9,19 @@ from .base import SqlRepository
 from .tables import ApiTokenRow, UserRow
 
 
+def _aware(dt: datetime | None) -> datetime | None:
+    """SQLite hands back naive datetimes for timezone-aware columns (Postgres does not); everything here is UTC."""
+    return dt if dt is None or dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 def _user(r: UserRow) -> User:
     return User(id=r.id, email=r.email, name=r.name, role=r.role, disabled=r.disabled, token_version=r.token_version,
-                created_at=r.created_at, last_login_at=r.last_login_at)
+                created_at=_aware(r.created_at), last_login_at=_aware(r.last_login_at))  # type: ignore[arg-type]
 
 
 def _token(r: ApiTokenRow) -> ApiToken:
-    return ApiToken(id=r.id, user_id=r.user_id, name=r.name, prefix=r.prefix, created_at=r.created_at,
-                    last_used_at=r.last_used_at, expires_at=r.expires_at, revoked=r.revoked)
+    return ApiToken(id=r.id, user_id=r.user_id, name=r.name, prefix=r.prefix, created_at=_aware(r.created_at),  # type: ignore[arg-type]
+                    last_used_at=_aware(r.last_used_at), expires_at=_aware(r.expires_at), revoked=r.revoked)
 
 
 class SqlAuthRepo(SqlRepository):
@@ -39,7 +44,7 @@ class SqlAuthRepo(SqlRepository):
         """(user, password_hash, failed_logins, locked_until)"""
         with self._scope() as s:
             r = s.scalar(select(UserRow).where(UserRow.email == email))
-            return None if r is None else (_user(r), r.password_hash, r.failed_logins, r.locked_until)
+            return None if r is None else (_user(r), r.password_hash, r.failed_logins, _aware(r.locked_until))
 
     def list_users(self) -> list[User]:
         with self._scope() as s:

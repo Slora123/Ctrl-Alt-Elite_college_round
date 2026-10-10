@@ -50,7 +50,7 @@ def test_hook_sees_every_gated_action_kind_and_each_is_paused(kstack_factory, de
         assert results[kind].status == "blocked" and results[kind].blocked_action_id
     assert results[ActionKind.FETCH_DATASET].status == "blocked"
     pending = st.gate.list_pending(env.id) + [a for a in st.gate.list_pending() if a.paper_env_id is None]
-    assert {a.kind for a in pending} == set(ActionKind) and all(a.decision == label for a in pending)
+    assert {a.kind for a in pending} == set(ActionKind) - {ActionKind.OPEN_TERMINAL} and all(a.decision == label for a in pending)
     assert all(a.status == BlockedActionStatus.PENDING for a in pending)
     # nothing ran
     assert st.cell(c.id).status == CellStatus.BLOCKED

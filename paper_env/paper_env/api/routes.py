@@ -21,7 +21,7 @@ from ..domain import ActionKind, SessionLimits
 from ..hooks import Action, ActionBlocked
 from ..security.store import SecretError
 from ..services.terminal import TerminalError
-from .deps import authorize, can_see, get_app, jsonable, visible_env_ids
+from .deps import authorize, can_see, check_env_access, get_app, jsonable, visible_env_ids
 
 router = APIRouter(dependencies=[Depends(authorize)])
 public = APIRouter()  # no authentication: liveness only
@@ -152,7 +152,13 @@ def revert(version_id: str, body: S.RevertReq, app: App = A):
 
 # ------------------------------------------------------------------ runs
 @router.post("/runs", status_code=202)
-def start_run(body: S.StartRun, app: App = A):
+def start_run(body: S.StartRun, app: App = A, who: Principal = P):
+    check_env_access(app, who, body.paper_env_id)  # ids in the body are invisible to the router-level check
+    if body.cell_id:
+        cell_env = app.notebook.get_cell(body.cell_id).paper_env_id
+        check_env_access(app, who, cell_env)
+        if cell_env != body.paper_env_id:
+            raise HTTPException(422, "cell_id does not belong to paper_env_id")
     mode = RunMode(body.mode)
     if mode in (RunMode.CELL, RunMode.UNTIL) and not body.cell_id:
         raise HTTPException(422, f"mode '{body.mode}' requires cell_id")

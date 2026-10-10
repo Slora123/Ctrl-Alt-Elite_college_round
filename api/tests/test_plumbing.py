@@ -35,4 +35,4 @@ def test_only_db_package_imports_sqlalchemy():
         if not f.relative_to(pkg).as_posix().startswith("db/") and bad.search(f.read_text(encoding="utf-8"))
     ]
     # container.py (wiring takes an Engine), demo.py (runs the migrations) and main.py (health probe) are the only exceptions
-    assert offenders == ["container.py", "demo.py", "main.py"]
+    assert sorted(offenders) == ["container.py", "demo.py", "main.py"]  # sorted: rglob order is filesystem dependent

@@ -49,8 +49,15 @@ def parse_pip_args(rest: str) -> tuple[list[str], list[str]]:
     reqs: list[str] = []
     bad: list[str] = []
     try:
-        toks = shlex.split(rest, comments=True)
+        lex = shlex.shlex(rest, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = "#"
+        toks = list(lex)
     except ValueError:
+        return [], [rest.strip()]
+    if any(t and all(ch in "();<>|&" for ch in t) for t in toks):
+        # a shell operator (; && | > ...) means this is not a plain "pip install <requirements>" line: whatever follows
+        # is another command. Report the whole thing instead of guessing which words are packages.
         return [], [rest.strip()]
     it = iter(toks)
     for t in it:

@@ -13,7 +13,7 @@ api/crisisgrid.db
 api_data/
 demo_data/
 node_modules/
-paper_env/frontend/e2e/last.png
+paper_env/frontend/e2e/*.png
 paper_env/paper_env/api/static/app/
 paper_env_data/
 venv/

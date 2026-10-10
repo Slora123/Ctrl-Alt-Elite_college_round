@@ -49,7 +49,7 @@ pre.json{font:11.5px ui-monospace,monospace;white-space:pre-wrap;word-break:brea
 .empty{color:var(--mute);padding:40px;text-align:center}
 
 .cell.s-markdown{border-left-color:#7c8aa5}.b-md{background:#7c8aa5}
-.md{padding:10px 14px;border-top:0;max-height:none;font-size:14px}.md h1,.md h2,.md h3{margin:.4em 0}.md p{margin:.4em 0}.md code{background:var(--code);padding:1px 4px;border-radius:3px}
+.md{padding:10px 14px;font-size:14px;overflow:auto}.md h1,.md h2,.md h3{margin:.4em 0}.md p{margin:.4em 0}.md code{background:var(--code);padding:1px 4px;border-radius:3px}
 .toc a{color:var(--running);text-decoration:none}.toc{padding:2px 0}
 .signin{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50}.signin .card{max-width:420px}
 .btn{display:inline-block;padding:5px 10px;border:1px solid var(--line);border-radius:6px;text-decoration:none;color:inherit;background:var(--panel)}

@@ -24,9 +24,9 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE = ROOT / ".cg"
+STATE = ROOT / ".cg"  # overridable with --state-dir
 WIN = sys.platform == "win32"
-API_PORT, NODE_PORT, WEB_PORT = 8100, 8000, 5173
+API_PORT, NODE_PORT, WEB_PORT = 8100, 8000, 5173  # overridable with --api-port / --node-port / --web-port
 
 
 def sh(cmd: list[str], cwd: Path, env: dict | None = None, quiet: bool = False) -> None:
@@ -94,13 +94,20 @@ def wait(url: str, name: str, seconds: int = 60) -> None:
 
 
 def main() -> None:
+    global STATE, API_PORT, NODE_PORT, WEB_PORT
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--no-auth", action="store_true", help="run without logins (single-user local use)")
     ap.add_argument("--worker", action="store_true", help="also start a worker that runs jobs in paper_env kernels")
     ap.add_argument("--terminal", action="store_true", help="enable the notebook terminal (a real unsandboxed shell!)")
     ap.add_argument("--llm-chain", default="", help="comma-separated LiteLLM model ids, e.g. groq/qwen/qwen3-32b")
     ap.add_argument("--llm-key", default="", help="API key for the LLM provider")
+    ap.add_argument("--state-dir", default="", help="where databases, environments and logs live (default: .cg)")
+    ap.add_argument("--api-port", type=int, default=API_PORT)
+    ap.add_argument("--node-port", type=int, default=NODE_PORT)
+    ap.add_argument("--web-port", type=int, default=WEB_PORT)
     a = ap.parse_args()
+    STATE = Path(a.state_dir).resolve() if a.state_dir else STATE
+    API_PORT, NODE_PORT, WEB_PORT = a.api_port, a.node_port, a.web_port
 
     py = ensure_python()
     ensure_node()
@@ -113,6 +120,8 @@ def main() -> None:
         "CG_PAPER_ENV_DIR": str(STATE / "paper_env"), "CG_PAPER_ENV_TERMINAL": "1" if a.terminal else "0",
         "CG_LLM_CHAIN": a.llm_chain, "CG_LLM_API_KEY": a.llm_key, "CG_AUTH_URL": f"http://127.0.0.1:{API_PORT}",
         "PAPER_ENV_ENABLE_TERMINAL": "1" if a.terminal else "0",
+        # the website's Vite proxy and the Node backend find their neighbours through these
+        "CG_API": f"http://127.0.0.1:{API_PORT}", "CG_NODE_API": f"http://127.0.0.1:{NODE_PORT}",
     }
     env = {**os.environ, **base}
     procs: list[subprocess.Popen] = []
@@ -142,9 +151,10 @@ def main() -> None:
     sh([str(py), "-m", "alembic", "upgrade", "head"], ROOT / "api", env=base, quiet=True)
     spawn("crisisgrid-api", [str(py), "-m", "uvicorn", "crisisgrid_api.main:app", "--host", "127.0.0.1", "--port", str(API_PORT)], ROOT / "api")
     wait(f"http://127.0.0.1:{API_PORT}/health", "CrisisGrid API")
-    spawn("website-api", [need("node", "Install Node.js 20+."), "server.js"], ROOT / "website" / "backend")
+    spawn("website-api", [need("node", "Install Node.js 20+."), "server.js"], ROOT / "website" / "backend", {"PORT": str(NODE_PORT)})
     wait(f"http://127.0.0.1:{NODE_PORT}/api/health", "website API")
-    spawn("website", [need("node", ""), str(ROOT / "website" / "node_modules" / "vite" / "bin" / "vite.js")], ROOT / "website")
+    spawn("website", [need("node", ""), str(ROOT / "website" / "node_modules" / "vite" / "bin" / "vite.js"), "--port", str(WEB_PORT), "--strictPort"],
+          ROOT / "website")
     wait(f"http://localhost:{WEB_PORT}/", "website")
 
     if a.worker:  # dev: registration is open, so the worker registers itself (its token is printed in .cg/logs/worker.log)

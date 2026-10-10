@@ -90,7 +90,7 @@ class CellView {
   err = h('pre', { class: 'err' });
   info = h('div', { class: 'decl' });
   doc = h('div', { class: 'doc' });
-  md = h('div', { class: 'md out' });
+  md = h('div', { class: 'md' });
   hist = h('div', { class: 'hist' });
   editor: Editor;
   author = h('select', { title: 'author recorded on the new CellVersion' }, ...['human', 'agent', 'generator'].map(a => h('option', { value: a }, a)));

@@ -593,5 +593,5 @@ if (process.env.CG_SEED !== "0" && !c.prepare("select 1 from papers").get()) {
 }
 c.close();
 
-const PORT = 8000;
+const PORT = Number(process.env.PORT) || 8000;
 app.listen(PORT, () => console.log(`[crisisgrid] API ready  http://127.0.0.1:${PORT}/docs`));

@@ -11,8 +11,8 @@ export const authHeaders=()=>{const t=getToken();return t?{Authorization:'Bearer
 /** fetch against the CrisisGrid FastAPI (proxied under /cg), with the bearer token. */
 export async function cg(path,o={}){
   const raw=o.raw
-  const r=await fetch('/cg'+path,{...o,headers:{...(raw||o.body===undefined||o.body instanceof FormData?{}:{'Content-Type':'application/json'}),...authHeaders(),...(o.headers||{})},
-    body:raw||o.body===undefined||o.body instanceof FormData?o.body:JSON.stringify(o.body)})
+  const r=await fetch('/cg'+path,{...o,headers:{...(raw!==undefined||o.body===undefined||o.body instanceof FormData?{}:{'Content-Type':'application/json'}),...authHeaders(),...(o.headers||{})},
+    body:raw!==undefined?raw:(o.body===undefined||o.body instanceof FormData?o.body:JSON.stringify(o.body))})
   if(r.status===401)window.dispatchEvent(new Event('cg:unauthorized'))
   if(!r.ok){let m=r.statusText;try{const j=await r.json();m=typeof j.detail==='string'?j.detail:JSON.stringify(j.detail)}catch{}const e=new Error(m);e.status=r.status;throw e}
   if(o.text)return r.text()

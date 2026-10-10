@@ -46,7 +46,7 @@ def test_success_streams_output_and_records_everything(kstack):
 def test_run_record_captures_everything_that_affects_results(kstack):
     env, cell, run, cr = one(kstack, "x = 1")
     assert run.env_lockfile_hash == kstack.template["lockfile_hash"] and run.seed == 0
-    assert run.notebook_version == 1 and run.backend == "local" and run.verification_eligible is False
+    assert run.notebook_version == 1 and run.backend == "local-cpu" and run.verification_eligible is False
     hw = run.hardware_info
     assert hw["env_python"]["python_version"].startswith("3.12") and hw["platform"] and "cuda" in hw
     assert hw["seeded"]["python"] is True and hw["seeded"]["numpy"] == "not_installed"
