@@ -136,9 +136,15 @@ class KStack(Stack):
         self.settings.min_free_disk_bytes = 0
         self.backend = LocalBackend(self.settings, self.scrubber)
         self.notebook = NotebookService(uow_factory, self.bus)
-        self.runner = KernelRunner(self.settings, uow_factory, self.bus, self.gate, self.backend, self.notebook)
+        from paper_env.datasets import DatasetStore
+        from paper_env.security import EnvVarSecretsProvider
+        self.datasets = DatasetStore(self.settings, uow_factory, self.bus, self.gate, EnvVarSecretsProvider(environ={}),
+                                     network_check=lambda m: self.online, backoff=0)
+        self.online = True
+        self.runner = KernelRunner(self.settings, uow_factory, self.bus, self.gate, self.backend, self.notebook,
+                                   datasets=self.datasets)
         self.runs = RunService(self.settings, uow_factory, self.bus, self.gate, self.runner, self.notebook,
-                               self.envs, self.backend)
+                               self.envs, self.backend, datasets=self.datasets)
         self.paper_envs = PaperEnvService(uow_factory, self.envs)
         self.template = template
 

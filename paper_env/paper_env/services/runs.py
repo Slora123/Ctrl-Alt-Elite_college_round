@@ -119,7 +119,18 @@ class RunService:
         return run
 
     def _kernel_opts(self, run: Run, env) -> dict[str, Any]:
-        return {"workdir": self.settings.runs_dir(run.id) / "work"}
+        opts: dict[str, Any] = {"workdir": self.settings.runs_dir(run.id) / "work"}
+        if self.datasets is not None:
+            ids = list(env.dataset_ids) + self._derived_ids(env.id)
+            manifest = self.datasets.prepare_mount(env.id, run.id, ids)
+            opts["extra_env"] = {"PAPER_ENV_DATASETS_MANIFEST": str(manifest)}
+        return opts
+
+    def _derived_ids(self, paper_env_id: str) -> list[str]:
+        """Derived datasets produced by earlier runs of this paper env stay visible to later runs."""
+        with self._uow() as u:
+            run_ids = {r.id for r in u.runs.list_runs(paper_env_id)}
+            return [m.dataset_id for m in u.datasets.list() if m.run_id in run_ids]
 
     def _finish(self, run: Run, status: RunStatus, kind: FailureKind | None, message: str | None = None,
                 extra: dict[str, Any] | None = None) -> Run:

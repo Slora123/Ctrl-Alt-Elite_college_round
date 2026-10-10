@@ -64,9 +64,9 @@ def parse_traceback(source: str, ename: str, evalue: str, tb: list[str]) -> Erro
 
 class KernelRunner:
     def __init__(self, settings: Settings, uow_factory: UnitOfWorkFactory, bus: EventBus, gate: ActionGate,
-                 backend: ComputeBackend, notebook: NotebookService):
+                 backend: ComputeBackend, notebook: NotebookService, datasets: Any | None = None):
         self.settings, self._uow, self.bus, self.gate = settings, uow_factory, bus, gate
-        self.backend, self.notebook = backend, notebook
+        self.backend, self.notebook, self.datasets = backend, notebook, datasets
         self.sessions: dict[str, Session] = {}
         self._guard = threading.Lock()
         gate.register_executor(ActionKind.EXECUTE_CELL, self._execute_blocked)
@@ -221,12 +221,25 @@ class KernelRunner:
         if final == "error" or error is not None:
             return self._experiment_fail(run, cell, cr, error or ErrorInfo(type="Error", message="cell failed"))
         cr.status = CellStatus.SUCCESS
+        derived = self._register_derived(run, cell, cr)
         self._save(cr, cell, CellStatus.SUCCESS, None)
         self.bus.publish(EventType.CELL_FINISHED, {
+            "derived_datasets": derived,
             "cell_id": cell.id, "cell_version_id": cr.cell_version_id, "cell_run_id": cr.id, "status": "success",
             "duration": cr.duration, "state_hash": cr.state_hash, "output_truncated": cr.output_truncated,
             "full_output_path": cr.full_output_path}, paper_env_id=run.paper_env_id, run_id=run.id)
         return cr
+
+    def _register_derived(self, run: Run, cell: Cell, cr: CellRun) -> list[str]:
+        """Datasets the cell created through ``datasets.derive`` become registered, linked derived data."""
+        if self.datasets is None:
+            return []
+        with self._uow() as u:
+            author = u.cells.get_version(cr.cell_version_id).author.value
+        made, errors = self.datasets.collect_derived(run.paper_env_id, run.id, cr.cell_version_id, author)
+        for e in errors:
+            cr.outputs.append({"type": "note", "text": self.bus.scrubber.scrub(e)})
+        return [m.dataset_id for m in made]
 
     # ------------------------------------------------------------------ outcomes
     def _failed_payload(self, cell: Cell, cr: CellRun, **extra: Any) -> dict[str, Any]:

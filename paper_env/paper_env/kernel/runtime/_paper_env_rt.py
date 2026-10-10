@@ -25,6 +25,70 @@ def _user_ns():
     return IPython.get_ipython().user_ns
 
 
+# --------------------------------------------------------------------------- datasets helper
+class DatasetUnavailable(LookupError):
+    pass
+
+
+class _Datasets:
+    """``datasets.resolve("cifar10@v1") -> Path`` (read-only). Reads a manifest snapshot written by the host
+    for this run; it never fetches, never touches the network and never sees credentials, which keeps cell
+    code portable across compute backends (a remote backend would provide the same snapshot)."""
+
+    def _load(self):
+        import os
+        path = os.environ.get("PAPER_ENV_DATASETS_MANIFEST")
+        if not path or not os.path.exists(path):
+            raise DatasetUnavailable("no dataset manifest is available in this runtime")
+        with open(path) as f:
+            return json.load(f)
+
+    def list(self):
+        return sorted(self._load().get("datasets", {}))
+
+    def info(self, dataset_id):
+        entries = self._load().get("datasets", {})
+        if dataset_id not in entries:
+            raise DatasetUnavailable(
+                f"dataset {dataset_id!r} is not available to this run (declared: {sorted(entries)}). "
+                "Datasets must be registered and declared by the paper environment before running.")
+        return dict(entries[dataset_id])
+
+    def resolve(self, dataset_id):
+        from pathlib import Path
+        p = Path(self.info(dataset_id)["path"])
+        if not p.exists():
+            raise DatasetUnavailable(f"dataset {dataset_id!r} is listed but its files are missing at {p}")
+        return p
+
+    def derive(self, name, version, parent=None):
+        """Directory for preprocessed data. Write into it, finish the cell, and the host registers it as a
+        derived dataset linked to ``parent`` and to this cell's version."""
+        import os
+        from pathlib import Path
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", name) or not re.fullmatch(r"[A-Za-z0-9._-]+", version):
+            raise ValueError("name and version may only contain letters, digits, '.', '_' and '-'")
+        run = self._load().get("run") or {}
+        if not run.get("derived_dir"):
+            raise DatasetUnavailable("no run directory is available for derived data")
+        out = Path(run["derived_dir"]) / f"{name}@{version}"
+        if out.exists():
+            raise FileExistsError(f"{out.name} already exists; derived datasets are immutable, use a new version")
+        out.mkdir(parents=True)
+        with open(Path(run["derived_dir"]).parent / "derived_requests.jsonl", "a") as f:
+            f.write(json.dumps({"name": name, "version": version, "parent": parent}) + "\n")
+        return out
+
+    def __repr__(self):
+        try:
+            return f"<datasets: {', '.join(self.list()) or 'none declared'}>"
+        except Exception as e:
+            return f"<datasets unavailable: {e}>"
+
+
+datasets = _Datasets()
+
+
 # --------------------------------------------------------------------------- seeding
 def seed_all(seed):
     """Seed python, numpy and torch (if installed). Returns what was and wasn't seeded, explicitly."""
@@ -49,6 +113,7 @@ def seed_all(seed):
 
 
 def setup(seed, extra=None):
+    _user_ns()["datasets"] = datasets
     report = seed_all(seed)
     report["python_version"] = sys.version.split()[0]
     report["hashseed_env"] = __import__("os").environ.get("PYTHONHASHSEED")

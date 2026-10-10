@@ -99,6 +99,8 @@ class DatasetStore:
         self.retries, self.backoff = retries, backoff
         self._key_locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
+        self._mounts: dict[str, tuple[str, list[str]]] = {}
+        self._derived_seen: dict[str, int] = {}
         bus.scrubber.add_secrets(secrets.known_values())
         gate.register_executor(ActionKind.FETCH_DATASET, lambda b: self._fetch_unchecked(b.payload["dataset_id"]))
         self.settings.cache_dir().mkdir(parents=True, exist_ok=True)
@@ -491,6 +493,85 @@ class DatasetStore:
                                                      "derived_from": parent_dataset_id, "run_id": run_id},
                          run_id=run_id)
         return manifest
+
+    # ------------------------------------------------------------------ kernel mount
+    def prepare_mount(self, paper_env_id: str, run_id: str, dataset_ids: Iterable[str]) -> Path:
+        """Write the read-only view a run's kernel sees: symlinks to the cache + a manifest snapshot.
+        Returns the manifest path (the kernel finds it via PAPER_ENV_DATASETS_MANIFEST)."""
+        ids = list(dict.fromkeys(dataset_ids))
+        self._mounts[paper_env_id] = (run_id, ids)
+        return self._write_mount(paper_env_id)
+
+    def add_to_mount(self, paper_env_id: str, dataset_id: str) -> None:
+        if paper_env_id in self._mounts:
+            run_id, ids = self._mounts[paper_env_id]
+            if dataset_id not in ids:
+                ids.append(dataset_id)
+            self._write_mount(paper_env_id)
+
+    def mount_manifest_path(self, paper_env_id: str) -> Path:
+        return self.settings.env_dir(paper_env_id) / "datasets_mount" / "manifest.json"
+
+    def _write_mount(self, paper_env_id: str) -> Path:
+        import json
+        run_id, ids = self._mounts[paper_env_id]
+        mount = self.settings.env_dir(paper_env_id) / "datasets_mount"
+        mount.mkdir(parents=True, exist_ok=True)
+        for p in mount.iterdir():
+            if p.is_symlink():
+                p.unlink()
+        entries = {}
+        for d in ids:
+            try:
+                m = self.get(d)
+            except NotFound:
+                continue
+            if m.status not in _USABLE or not m.cache_path or not Path(m.cache_path).is_dir():
+                continue
+            link = mount / m.dataset_id.replace("/", "_")
+            link.symlink_to(m.cache_path, target_is_directory=True)
+            entries[m.dataset_id] = {
+                "path": str(link), "name": m.name, "version": m.version, "status": m.status.value,
+                "license": m.license, "access_type": m.access_type.value, "overall_checksum": m.overall_checksum,
+                "parent_dataset_id": m.parent_dataset_id,
+                "splits": [s.model_dump(mode="json") for s in m.splits],
+                "files": [{"path": f.path, "size": f.size} for f in m.files]}  # no source_uri, no credentials
+        derived = self.settings.runs_dir(run_id) / "derived"
+        derived.mkdir(parents=True, exist_ok=True)
+        snap = {"version": 1, "run": {"id": run_id, "derived_dir": str(derived)}, "datasets": entries}
+        tmp = mount / "manifest.json.tmp"
+        tmp.write_text(json.dumps(snap, indent=1))
+        tmp.replace(mount / "manifest.json")
+        return mount / "manifest.json"
+
+    def collect_derived(self, paper_env_id: str, run_id: str, producing_cell_version_id: str,
+                        author: str | None = None) -> tuple[list[DatasetManifest], list[str]]:
+        """Register datasets that a cell created via ``datasets.derive``. The request file is plain JSON lines
+        written by the kernel; each entry is validated and the directory is recomputed here, never trusted."""
+        import json
+        req_file = self.settings.runs_dir(run_id) / "derived_requests.jsonl"
+        if not req_file.exists():
+            return [], []
+        lines = req_file.read_text().splitlines()
+        start = self._derived_seen.get(run_id, 0)
+        self._derived_seen[run_id] = len(lines)
+        done: list[DatasetManifest] = []
+        errors: list[str] = []
+        for line in lines[start:]:
+            try:
+                req = json.loads(line)
+                name, version, parent = req["name"], req["version"], req.get("parent")
+                if not (re.fullmatch(r"[A-Za-z0-9._-]+", name) and re.fullmatch(r"[A-Za-z0-9._-]+", version)):
+                    raise ValueError("invalid name/version")
+                m = self.register_derived(
+                    run_id=run_id, name=name, version=version,
+                    directory=self.settings.runs_dir(run_id) / "derived" / f"{name}@{version}",
+                    parent_dataset_id=parent, producing_cell_version_id=producing_cell_version_id, author=author)
+                self.add_to_mount(paper_env_id, m.dataset_id)
+                done.append(m)
+            except (ValueError, KeyError, TypeError, FileNotFoundError, Conflict, NotFound) as e:
+                errors.append(f"derived dataset request rejected: {type(e).__name__}: {e}")
+        return done, errors
 
     # ------------------------------------------------------------------ preflight
     def preflight(self, dataset_ids: Iterable[str], *, fetch_missing: bool = True,
