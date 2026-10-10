@@ -19,12 +19,17 @@
     "@codemirror/view": "^6.43.14",
     "@jupyter-widgets/base": "^6.0.12",
     "@jupyter-widgets/base-manager": "^1.0.13",
+    "@jupyter-widgets/controls": "^5.0.13",
     "@jupyter-widgets/html-manager": "^1.0.15",
+    "@jupyter-widgets/output": "^6.0.12",
     "@jupyterlab/rendermime": "^4.5.11",
     "@jupyterlab/rendermime-interfaces": "^3.13.11",
     "@lumino/widgets": "^2.10.0",
     "codemirror": "^6.0.2",
     "typescript": "^5.9.3",
     "vite": "^5.4.21"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.13.0"
   }
 }

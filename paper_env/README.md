@@ -39,6 +39,26 @@ Config: `Settings` (`paper_env/config.py`) holds every limit (timeouts, output c
 reserve, checkpoint-after-each-cell). API env vars: `PAPER_ENV_DATA_DIR`. Secrets: `HF_TOKEN`,
 `PAPER_ENV_URL_TOKEN`, `KAGGLE_KEY` are read by the `EnvVarSecretsProvider` at fetch time only.
 
+## Web UI
+
+A Colab-style notebook page lives in `frontend/` (Vite + TypeScript, no framework): **CodeMirror 6** editors with
+kernel-backed completion (Tab) and docs (Shift+Tab), **JupyterLab rendermime** for rich output (HTML is sanitized,
+never trusted), **ipywidgets** (comm traffic tunnelled over the event WebSocket and `POST .../kernel/comm`),
+tqdm-style progress bars, `input()` prompts, `# @param` form fields, per-cell code/output collapse, a Files panel,
+datasets, env, runs and blocked-action panels.
+
+```bash
+cd frontend && npm install && npm run build   # writes paper_env/api/static/app (git-ignored); the API serves it at /ui/
+uv run python -m paper_env.api                # http://127.0.0.1:8765/  (set PAPER_ENV_PORT to change)
+node e2e/smoke.mjs                            # headless-Chrome end-to-end test (needs a running API + system Chrome; set BASE/CHROME)
+npm run dev                                   # Vite dev server with proxy to the API on :8000
+```
+
+Without a build, `/` serves the older single-file page (also at `/legacy`). Widgets need `ipywidgets` installed in the
+env (env tab). Limits: widget state is lost on page reload or kernel restart (re-run the cell); only the built-in
+widget packages are loaded (no third-party widget JS); untrusted SVG is shown as its text fallback; completion needs a
+live kernel (run any cell first) and waits while a cell is executing.
+
 ## Public Python API
 
 Build everything with `app = build_app(Settings(...), hook=..., secrets=..., backend=...)`, then call
@@ -50,7 +70,7 @@ Build everything with `app = build_app(Settings(...), hook=..., secrets=..., bac
 | `app.envs` (EnvManager) | `create_env(id)`, `install_package(id, name, version)`, `pin_version(id, name, version)`, `rebuild_env(id)`, `get_lockfile(id)`, `hardware_info(id)` |
 | `app.notebook` | `add_cell`, `list_cells`, `source_of`, `versions`, **`apply_edit(cell_id, new_source, author)`**, **`revert_to(version_id)`**, `update_declarations`, `delete_cell` |
 | `app.runs` | `run_cell(id)`, `run_until(id)`, `run_all(env_id, stop_on_fail)`, `run_clean(env_id)`, `interrupt(run_id)`, `continue_from(checkpoint_id)` |
-| `app.runner` | `restart_kernel(env_id)`, `interrupt(env_id)`, `shutdown()` |
+| `app.runner` | `restart_kernel(env_id)`, `interrupt(env_id)`, `shutdown()`, `complete(env_id, code, pos)`, `inspect(env_id, code, pos)`, `provide_input(env_id, text)`, `comm_send(env_id, type, content)` |
 | `app.datasets` | `register(manifest)`, `fetch(id)`, `resolve(id) -> Path`, `verify(id)`, `status(id)`, `register_derived(...)`, `register_upload(...)`, `check_upstream(id)`, `reset(id)`, `preflight(ids)` |
 | `app.checkpoints` | `list(env_id)`, `get(id)`, `resume_from(checkpoint_id)` |
 | `app.gate` | `list_pending()`, `resume_blocked(action_id, Decision)` |
@@ -96,6 +116,7 @@ Route handlers are thin; JSON in/out; OpenAPI at `/docs`.
 | Datasets | `POST /datasets`, `POST /datasets/upload`, `GET /datasets[/{id}[/status]]`, `POST /datasets/{id}/{fetch,verify,check-upstream,reset}` |
 | Checkpoints | `GET /paper-envs/{id}/checkpoints`, `GET /checkpoints/{id}`, `POST /checkpoints/{id}/resume` |
 | Harness | `GET /blocked`, `POST /blocked/{id}/resolve` |
+| Editor | `POST /paper-envs/{id}/kernel/{complete,inspect,input,comm}`; files: `GET/PUT/DELETE /paper-envs/{id}/files[/{path}]` |
 | Events | `GET /events/history`, `GET /events/schema`, **`WS /events?after_seq=&run_id=&paper_env_id=&types=`** |
 
 One run per PaperEnv at a time (`409` otherwise). The service has **no authentication** and binds to
@@ -113,6 +134,8 @@ at-least-once, ordered per connection: use `seq` to de-duplicate).
 | `cell_started` | `cell_id`, `cell_version_id`, `cell_run_id`, `position`, `timeout` |
 | `cell_output` | `cell_id`, `cell_run_id`, `type` (`stream`/`display`), `name`, `text` / `data` |
 | `cell_finished` | `status`, `duration`, `state_hash`, `output_truncated`, `full_output_path`, `derived_datasets` |
+| `input_requested` | `cell_id`, `cell_run_id`, `prompt`, `password` (answer with `POST /paper-envs/{id}/kernel/input`) |
+| `comm_message` (ephemeral, **not persisted**, `seq` is null) | `msg_type` (`comm_open`/`comm_msg`/`comm_close`), `content`, `buffers` (base64): ipywidgets traffic |
 | `cell_failed` (experiment) | `exception_type`, `message`, `traceback`, `failing_line`, `failing_lineno`, `cell_version_id` |
 | `kernel_died` (infrastructure) | `kind` (`kernel_died`/`oom_or_killed`/`segfault`/`killed_after_timeout`/`backend_error`), `message`, `exit_code`, `state_lost`, `stale_cells` |
 | `cell_edited` | `change` (created/edited/reverted/deleted), `cell_version_id`, `author`, `diff`, `stale_cells`, `notebook_version` |

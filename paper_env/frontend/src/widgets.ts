@@ -1,6 +1,9 @@
 // ipywidgets support: a widget manager whose comms are tunnelled through our HTTP API (frontend -> kernel) and
 // the event WebSocket (kernel -> frontend, as ephemeral `comm_message` events).
-import { HTMLManager } from '@jupyter-widgets/html-manager';
+import { ManagerBase } from '@jupyter-widgets/base-manager';
+import * as base from '@jupyter-widgets/base';
+import * as controls from '@jupyter-widgets/controls';
+import * as outputs from '@jupyter-widgets/output';
 import { Widget } from '@lumino/widgets';
 import '@jupyter-widgets/controls/css/widgets.built.css';
 import { fromBase64, toBase64 } from './api';
@@ -27,17 +30,25 @@ class PyComm {
 
 export interface CommEventPayload { msg_type: string; content: any; buffers?: string[]; metadata?: any }
 
-export class LiveWidgetManager extends HTMLManager {
+export class LiveWidgetManager extends ManagerBase {
   private comms = new Map<string, PyComm>();
   constructor(private transport: CommTransport) { super(); }
 
-  async _create_comm(target_name: string, model_id?: string, data?: any, _m?: any, buffers?: any): Promise<any> {
+  /** Only the built-in widget packages are available (custom third-party widget JS is deliberately not loaded). */
+  protected loadClass(className: string, moduleName: string, _moduleVersion: string): Promise<any> {
+    const mods: Record<string, any> = { '@jupyter-widgets/base': base, '@jupyter-widgets/controls': controls, '@jupyter-widgets/output': outputs };
+    const m = mods[moduleName]; const cls = m?.[className];
+    return cls ? Promise.resolve(cls) : Promise.reject(new Error(`Widget class ${moduleName}.${className} is not available in this UI`));
+  }
+  async display_view(view: any, el: HTMLElement): Promise<void> { Widget.attach((view as any).luminoWidget, el); }
+
+  protected async _create_comm(target_name: string, model_id?: string, data?: any, _m?: any, buffers?: any): Promise<any> {
     const comm = new PyComm(model_id ?? crypto.randomUUID().replace(/-/g, ''), target_name, this.transport);
     this.comms.set(comm.comm_id, comm);
     if (data !== undefined) comm.open(data, undefined, undefined, buffers);
     return comm;
   }
-  async _get_comm_info(): Promise<{}> { return {}; }
+  protected async _get_comm_info(): Promise<{}> { return {}; }
 
   async handle(ev: CommEventPayload): Promise<void> {
     const buffers = (ev.buffers ?? []).map(fromBase64);
