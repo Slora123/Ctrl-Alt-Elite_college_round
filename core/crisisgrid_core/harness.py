@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from .models import Claim
 
 __all__ = [
-    "HarnessConfig", "GuardDecision", "HarnessGuard", "FirewallViolation", "loop_key", "normalize_error",
+    "EscalationRequired", "HarnessConfig", "GuardDecision", "HarnessGuard", "FirewallViolation", "loop_key", "normalize_error",
     "assert_no_targets", "EXECUTOR_AGENTS",
 ]
 
@@ -27,6 +27,14 @@ _TARGET_KEYS = frozenset({"reported_value", "reported", "target", "target_value"
 
 class FirewallViolation(RuntimeError):
     pass
+
+
+class EscalationRequired(RuntimeError):
+    """The Harness guard says stop: the pipeline must pause with a `stuck` gate (never fail silently)."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 def _walk(obj: Any, path: str, seen: set[int]) -> Iterable[tuple[str, Any]]:
