@@ -1,5 +1,8 @@
 # CrisisGrid
 
+## Pages
+`/` is the animated landing page (`src/Landing.jsx`, styles in `src/landing.css`). **Skip intro** and **Explore the vision** both go to the dashboard at `/#/mission`. The sidebar logo links back to the landing page. Run `npm install` after pulling this change: it adds `three` for the 3D desk scene.
+
 ## Run (one command)
 ```
 npm install
