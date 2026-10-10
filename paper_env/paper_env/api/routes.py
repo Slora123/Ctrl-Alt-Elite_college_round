@@ -5,7 +5,8 @@ import asyncio
 import queue
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 
 from ..container import App
 from ..domain import (
@@ -271,6 +272,32 @@ def list_blocked(paper_env_id: str | None = None, app: App = A):
 def resolve_blocked(action_id: str, body: S.ResolveBlocked, app: App = A):
     kind = DecisionKind.ALLOW if body.decision == "allow" else DecisionKind.DENY
     return {"result": jsonable(app.gate.resume_blocked(action_id, Decision(kind, body.reason)))}
+
+
+# ------------------------------------------------------------------ files workspace
+@router.get("/paper-envs/{paper_env_id}/files")
+def list_files(paper_env_id: str, app: App = A):
+    app.paper_envs.get(paper_env_id)
+    return jsonable(app.files.list(paper_env_id))
+
+
+@router.put("/paper-envs/{paper_env_id}/files/{path:path}", status_code=201)
+async def upload_file(paper_env_id: str, path: str, request: Request, app: App = A):
+    """Raw request body is the file content (stream-written; size-capped; path confined to the workspace)."""
+    app.paper_envs.get(paper_env_id)
+    chunks = [c async for c in request.stream()]
+    return jsonable(app.files.save(paper_env_id, path, chunks))
+
+
+@router.get("/paper-envs/{paper_env_id}/files/{path:path}")
+def download_file(paper_env_id: str, path: str, app: App = A):
+    p = app.files.open_for_download(paper_env_id, path)
+    return FileResponse(p, filename=p.name)
+
+
+@router.delete("/paper-envs/{paper_env_id}/files/{path:path}", status_code=204)
+def delete_file(paper_env_id: str, path: str, app: App = A):
+    app.files.delete(paper_env_id, path)
 
 
 # ------------------------------------------------------------------ events

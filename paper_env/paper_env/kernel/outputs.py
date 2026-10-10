@@ -12,6 +12,7 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _MAX_ITEM_BYTES = 32 * 1024  # a single mime item bigger than this never goes into the DB
 _HOLD_BACK = 256  # chars kept unflushed so a secret split across chunks is still seen whole
 _FLUSH_AT = 8192
+_SPLIT = re.compile(r"(\r\n|\n|\r)")
 
 
 def strip_ansi(s: str) -> str:
@@ -24,6 +25,7 @@ class OutputRecorder:
         self.artifact_path = artifact_path
         self.max_db, self.max_total = max_db_bytes, max_total_bytes
         self._buf: dict[str, str] = {"stdout": "", "stderr": ""}
+        self._cr_mode: dict[str, bool] = {"stdout": False, "stderr": False}
         self._db: list[dict[str, Any]] = []
         self._db_bytes = 0
         self.total_bytes = 0
@@ -34,23 +36,36 @@ class OutputRecorder:
         self._all: list[dict[str, Any]] = []  # held in memory only until the first truncation
 
     # ---- streams (line-buffered so secrets spanning chunks are caught) ----
-    def stream(self, name: str, text: str) -> list[str]:
-        """Returns scrubbed text ready to emit (possibly empty while a partial line is buffered)."""
+    def stream(self, name: str, text: str) -> list[tuple[str, bool]]:
+        """Returns ``(scrubbed_text, overwrite)`` pieces ready to emit. ``overwrite=True`` is a live
+        progress update ended by a carriage return (tqdm style): the viewer replaces the current line.
+        Only completed lines are stored; overwritten progress states are not."""
         if self.limit_exceeded:
             return []  # cheap drop: no scrubbing/regex work while a runaway cell floods us
         self._raw_bytes += len(text)
         if self._raw_bytes > self.max_total:
             self._trip_limit()
             return []
-        buf = self._buf[name] + text
-        out = ""
-        if "\n" in buf:
-            head, _, tail = buf.rpartition("\n")
-            out, buf = head + "\n", tail
-        if len(buf) > _FLUSH_AT:
-            out, buf = out + buf[:-_HOLD_BACK], buf[-_HOLD_BACK:]
-        self._buf[name] = buf
-        return [self._record_stream(name, out)] if out else []
+        emits: list[tuple[str, bool]] = []
+        line = self._buf[name]
+        progress = self._cr_mode[name]
+        for tok in _SPLIT.split(text):
+            if tok in ("\n", "\r\n"):
+                emits.append((self._record_stream(name, line + "\n"), False))
+                line, progress = "", False
+            elif tok == "\r":
+                progress = True
+                line = ""
+            else:
+                line += tok
+                if len(line) > _FLUSH_AT:  # very long line: flush all but a tail so split secrets are still seen
+                    emits.append((self._record_stream(name, line[:-_HOLD_BACK]), False))
+                    line = line[-_HOLD_BACK:]
+        self._buf[name] = line
+        self._cr_mode[name] = progress
+        if progress and line:  # progress-bar mode: show the current state right away
+            emits.append((self.scrubber.scrub(line), True))
+        return emits
 
     def flush(self) -> list[tuple[str, str]]:
         res = []

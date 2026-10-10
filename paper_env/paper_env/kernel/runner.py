@@ -179,8 +179,9 @@ class KernelRunner:
         with session.lock:  # cells in one kernel run strictly one at a time
             for ev in self.backend.execute(session.handle, source, timeout):
                 if isinstance(ev, ExecOutput):
-                    for text in rec.stream(ev.stream, ev.text):
-                        self._emit_output(run, cell, cr, {"type": "stream", "name": ev.stream, "text": text})
+                    for text, overwrite in rec.stream(ev.stream, ev.text):
+                        self._emit_output(run, cell, cr, {"type": "stream", "name": ev.stream, "text": text,
+                                                          "overwrite": overwrite})
                 elif isinstance(ev, ExecDisplay):
                     if INTERNAL_MIME in ev.data or rec.limit_exceeded:
                         continue

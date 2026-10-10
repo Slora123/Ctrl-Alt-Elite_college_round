@@ -210,7 +210,7 @@ class RunService:
         return run
 
     def _kernel_opts(self, run_id: str, env) -> dict[str, Any]:
-        opts: dict[str, Any] = {"workdir": self.settings.runs_dir(run_id) / "work"}
+        opts: dict[str, Any] = {"workdir": self.settings.files_dir(env.id)}
         if self.datasets is not None:
             ids = list(env.dataset_ids) + self._derived_ids(env.id)
             manifest = self.datasets.prepare_mount(env.id, run_id, ids)

@@ -17,6 +17,7 @@ from .repos import UnitOfWorkFactory
 from .repos.sqlite import sqlite_uow_factory
 from .security import EnvVarSecretsProvider, Scrubber, SecretsProvider
 from .services.checkpoints import CheckpointService
+from .services.files import FileService
 from .services.notebook import NotebookService
 from .services.paper_envs import PaperEnvService
 from .services.runs import RunService
@@ -38,6 +39,7 @@ class App:
     runs: RunService
     checkpoints: CheckpointService
     paper_envs: PaperEnvService
+    files: FileService
     _threads: set[threading.Thread] = field(default_factory=set)
 
     # ---- lifecycle
@@ -93,4 +95,4 @@ def build_app(settings: Settings | None = None, *, db_url: str | None = None, ho
     checkpoints = CheckpointService(settings, uow, bus, backend, runner, notebook, runs._kernel_opts)
     runs.checkpoints = checkpoints
     return App(settings, uow, scrubber, secrets, bus, gate, envs, datasets, backend, notebook, runner, runs,
-               checkpoints, PaperEnvService(uow, envs))
+               checkpoints, PaperEnvService(uow, envs), FileService(settings))

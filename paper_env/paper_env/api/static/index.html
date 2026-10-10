@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Environment</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#1f2328;--mute:#6b7280;--line:#e2e5ea;--accent:#f9ab00;--code:#fafbfc;
+--pending:#9aa0a6;--running:#1a73e8;--success:#188038;--failed:#d93025;--skipped:#b08900;--stale:#e8710a;--blocked:#8e44ad;}
+@media (prefers-color-scheme:dark){:root{--bg:#16181d;--panel:#1e2128;--ink:#e6e8eb;--mute:#8b93a1;--line:#2d313a;--code:#171a20}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;gap:12px;align-items:center;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+header h1{font-size:16px;margin:0;font-weight:600}header h1 span{color:var(--accent)}
+select,input,textarea,button{font:inherit;color:inherit}
+select,input{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+button{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+button:hover{border-color:var(--accent)}button.primary{background:var(--accent);border-color:var(--accent);color:#1f2328;font-weight:600}
+button.danger{color:var(--failed)}button:disabled{opacity:.5;cursor:default}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16px;max-width:1500px;margin:0 auto}
+@media (max-width:1000px){.layout{grid-template-columns:1fr}}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.bar .sp{flex:1}
+.meta{color:var(--mute);font-size:12px;font-family:ui-monospace,monospace}
+.cell{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--pending);border-radius:8px;margin-bottom:12px;overflow:hidden}
+.cell.s-running{border-left-color:var(--running)}.cell.s-success{border-left-color:var(--success)}.cell.s-failed{border-left-color:var(--failed)}
+.cell.s-skipped{border-left-color:var(--skipped)}.cell.s-stale{border-left-color:var(--stale)}.cell.s-blocked{border-left-color:var(--blocked)}
+.chead{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.badge{font-size:11px;padding:1px 8px;border-radius:10px;color:#fff;background:var(--pending);text-transform:uppercase;letter-spacing:.04em}
+.b-running{background:var(--running);animation:pulse 1s infinite}.b-success{background:var(--success)}.b-failed{background:var(--failed)}
+.b-skipped{background:var(--skipped)}.b-stale{background:var(--stale)}.b-blocked{background:var(--blocked)}.b-infra{background:#000}
+@keyframes pulse{50%{opacity:.5}}
+.cell textarea{width:100%;border:0;outline:0;resize:none;padding:10px 12px;background:var(--code);font:13px/1.5 ui-monospace,Menlo,monospace;min-height:56px;display:block}
+.cell textarea.dirty{box-shadow:inset 3px 0 var(--accent)}
+.decl{display:flex;gap:8px;padding:4px 10px;border-top:1px solid var(--line);font-size:12px;color:var(--mute);align-items:center;flex-wrap:wrap}
+.decl input{width:150px;font-size:12px;padding:2px 6px}
+.warn{padding:4px 12px;font-size:12px;color:var(--stale);background:rgba(232,113,10,.08)}
+.out{padding:8px 12px;border-top:1px solid var(--line);font:12.5px/1.45 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto}
+.out .stderr{color:var(--failed)}.out .res{color:var(--running)}.out .note{color:var(--mute);font-style:italic}
+.err{margin:0;padding:8px 12px;background:rgba(217,48,37,.08);color:var(--failed);border-top:1px solid var(--line);font:12px ui-monospace,monospace;white-space:pre-wrap}
+.err.infra{background:rgba(0,0,0,.12);color:var(--ink)}
+.hist{padding:8px 12px;border-top:1px solid var(--line);font-size:12px}.hist pre{margin:4px 0 8px;padding:6px;background:var(--code);border-radius:4px;overflow:auto;font:12px ui-monospace,monospace}
+aside .tabs{display:flex;gap:2px;margin-bottom:8px;flex-wrap:wrap}aside .tabs button{border-radius:6px 6px 0 0;font-size:12px}aside .tabs button.on{background:var(--accent);border-color:var(--accent);color:#1f2328}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:78vh;overflow:auto}
+.ev{font:11.5px/1.35 ui-monospace,monospace;padding:2px 0;border-bottom:1px dotted var(--line);word-break:break-all}.ev b{color:var(--running)}.ev.bad b{color:var(--failed)}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0}.row input{flex:1;min-width:90px}
+.item{padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px}.item small{color:var(--mute)}
+pre.json{font:11.5px ui-monospace,monospace;white-space:pre-wrap;word-break:break-all}
+
+.form{display:flex;flex-wrap:wrap;gap:10px 18px;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--code)}
+.form label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:2px}.form input,.form select{min-width:120px}
+.form input[type=range]{padding:0}.form .rv{color:var(--ink)}
+.chead .tog{font-size:11px;padding:2px 6px;color:var(--mute)}.chead .tog.off{background:var(--code);text-decoration:line-through}
+.fileitem{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--line);font-size:12.5px}.fileitem a{flex:1;word-break:break-all;color:var(--running)}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#1f2328;color:#fff;padding:8px 14px;border-radius:8px;display:none;z-index:10;max-width:80vw}
+.empty{color:var(--mute);padding:40px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>Paper <span>Environment</span></h1>
+  <select id="envSel" title="Paper environment"></select>
+  <button id="newEnvBtn">+ New paper env</button>
+  <span class="meta" id="health"></span>
+</header>
+<div class="layout">
+  <main>
+    <div id="newEnv" class="card" style="display:none;margin-bottom:12px">
+      <div class="row"><input id="neAlias" placeholder="alias e.g. resnet-2015"><input id="neHash" placeholder="paper hash" value="demo">
+        <input id="neSeed" type="number" value="42" style="max-width:80px" title="seed">
+        <label><input type="checkbox" id="neBuild" checked style="flex:0"> build env (uv)</label>
+        <button class="primary" id="neGo">Create</button></div>
+    </div>
+    <div id="notebook"><div class="empty">Create or select a paper environment to begin.</div></div>
+  </main>
+  <aside>
+    <div class="tabs" id="tabs"></div>
+    <div class="card" id="panel"></div>
+  </aside>
+</div>
+<div id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+const h = (tag, props = {}, ...kids) => { const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) { if (k === 'class') e.className = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (v !== null && v !== undefined) e[k] = v; }
+  kids.flat().forEach(c => e.append(c instanceof Node ? c : document.createTextNode(c ?? ''))); return e; };
+const api = async (method, path, body) => {
+  const r = await fetch(path, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  const txt = await r.text(); let data; try { data = txt ? JSON.parse(txt) : null } catch { data = txt }
+  if (!r.ok) { const e = new Error(data?.detail ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : r.statusText); e.status = r.status; throw e; }
+  return data;
+};
+let toastT; const toast = (m, bad) => { const t = $('#toast'); t.textContent = m; t.style.background = bad ? '#d93025' : '#1f2328'; t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => t.style.display = 'none', 4000); };
+const guard = fn => async (...a) => { try { return await fn(...a) } catch (e) { toast(e.message, true) } };
+
+const state = { envs: [], envId: localStorage.envId || null, cells: [], outputs: {}, runs: [], active: null, tab: 'events', events: [], lastSeq: 0, ws: null, openHist: {}, dirty: {}, lastRunCells: {} };
+const ui = JSON.parse(localStorage.ui || '{}'); const saveUi = () => localStorage.ui = JSON.stringify(ui);
+const uiOf = id => ui[id] ||= { code: false, out: false };   // true = hidden
+const PARAM_RE = /^(\s*)([A-Za-z_]\w*)\s*=\s*(.*?)\s*#\s*@param\s*(.*)$/;
+function parseSpec(txt, val) { txt = txt.trim(); let spec = {};
+  if (txt.startsWith('[')) { try { return { type: 'select', options: JSON.parse(txt.replace(/'/g, '"')) }; } catch {} }
+  if (txt.startsWith('{')) { try { spec = JSON.parse(txt.replace(/([{,]\s*)([A-Za-z_]\w*)\s*:/g, '$1"$2":').replace(/'/g, '"')); } catch {} }
+  if (!spec.type) spec.type = /^(True|False)$/.test(val) ? 'boolean' : /^-?\d+$/.test(val) ? 'integer' : /^-?[\d.]+(e-?\d+)?$/.test(val) ? 'number' : 'string';
+  return spec; }
+function parseParams(src) { return src.split('\n').map((line, i) => { const m = PARAM_RE.exec(line); if (!m) return null;
+  return { i, indent: m[1], name: m[2], raw: m[3], rawSpec: m[4], spec: parseSpec(m[4], m[3]) }; }).filter(Boolean); }
+const pyStr = v => { try { return JSON.parse(v.replace(/^'(.*)'$/, '"$1"')); } catch { return v; } };
+function toPy(spec, v) { if (spec.type === 'boolean') return v ? 'True' : 'False';
+  if (['integer', 'number', 'slider'].includes(spec.type) || (spec.type === 'select' && typeof v === 'number')) return String(v);
+  return JSON.stringify(String(v)); }
+function setParam(c, p, v) { const lines = (state.dirty[c.id] ?? state.sources[c.id]).split('\n');
+  lines[p.i] = `${p.indent}${p.name} = ${toPy(p.spec, v)}  #@param ${p.rawSpec}`; state.dirty[c.id] = lines.join('\n'); render(true); }
+const curEnv = () => state.envs.find(e => e.id === state.envId);
+
+// ---------------------------------------------------------------- loading
+async function loadEnvs() {
+  state.envs = await api('GET', '/paper-envs');
+  if (!state.envs.find(e => e.id === state.envId)) state.envId = state.envs[0]?.id || null;
+  const sel = $('#envSel'); sel.replaceChildren(...state.envs.map(e => h('option', { value: e.id, selected: e.id === state.envId }, e.alias)));
+  localStorage.envId = state.envId || '';
+}
+async function loadAll() {
+  if (!state.envId) { state.cells = []; render(); return; }
+  const [d, cells, runs] = await Promise.all([api('GET', `/paper-envs/${state.envId}`), api('GET', `/paper-envs/${state.envId}/cells`), api('GET', `/paper-envs/${state.envId}/runs`)]);
+  state.detail = d; state.active = d.active_run_id; state.cells = cells; state.runs = runs;
+  const latest = [...runs].reverse().find(r => r.status !== 'pending');
+  if (latest) await loadRunOutputs(latest.id, true);
+  for (const c of cells) if (!(c.id in state.dirty) && !state.sources?.[c.id]) { state.sources = state.sources || {}; state.sources[c.id] = (await api('GET', `/cells/${c.id}`)).source; }
+  render();
+}
+async function loadRunOutputs(runId, replace) {
+  const crs = await api('GET', `/runs/${runId}/cells`);
+  const live = {}; for (const c of state.cells) if (c.status === 'running' && state.lastRunCells[c.id]) live[c.id] = state.lastRunCells[c.id];
+  if (replace) state.lastRunCells = {};
+  for (const cr of crs) state.lastRunCells[cr.cell_id] = cr;
+  Object.assign(state.lastRunCells, live);
+}
+let refreshT; const refreshSoon = () => { clearTimeout(refreshT); refreshT = setTimeout(guard(async () => { state.sources = {}; for (const k in state.dirty) delete state.dirty[k]; await loadAll(); }), 250); };
+const softRefresh = () => { clearTimeout(refreshT); refreshT = setTimeout(guard(async () => {
+  const [cells, d, runs] = await Promise.all([api('GET', `/paper-envs/${state.envId}/cells`), api('GET', `/paper-envs/${state.envId}`), api('GET', `/paper-envs/${state.envId}/runs`)]);
+  state.cells = cells; state.active = d.active_run_id; state.detail = d; state.runs = runs;
+  const latest = runs[runs.length - 1]; if (latest) await loadRunOutputs(latest.id, true);
+  render(true); }), 300); };
+
+// ---------------------------------------------------------------- render
+function badge(status, kind) { return h('span', { class: `badge b-${status}` }, status); }
+function renderCell(c) {
+  const cr = state.lastRunCells[c.id]; const src = state.dirty[c.id] ?? state.sources?.[c.id] ?? ''; const u = uiOf(c.id); const params = parseParams(src);
+  const ta = h('textarea', { spellcheck: false, value: src, 'data-cell': c.id, class: state.dirty[c.id] !== undefined ? 'dirty' : '',
+    oninput: e => { state.dirty[c.id] = e.target.value; e.target.classList.add('dirty'); auto(e.target); },
+    onkeydown: e => { if (e.shiftKey && e.key === 'Enter') { e.preventDefault(); runCell(c); } if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); saveCell(c); } } });
+  setTimeout(() => auto(ta));
+  const author = h('select', { title: 'author recorded on the new CellVersion' }, ...['human', 'agent', 'generator'].map(a => h('option', { value: a }, a)));
+  const head = h('div', { class: 'chead' }, h('span', { class: 'meta' }, `[${c.position}]`), badge(c.status),
+    c.status === 'failed' && c.last_failure_kind === 'infrastructure' ? h('span', { class: 'badge b-infra', title: 'kernel/infrastructure failure, not a cell exception' }, 'infra') : '',
+    h('span', { class: 'sp', style: 'flex:1' }),
+    h('button', { class: 'primary', title: 'Shift+Enter', onclick: () => runCell(c) }, '▶ Run'),
+    h('button', { class: 'tog' + (u.code ? ' off' : ''), title: 'show/hide code', onclick: () => { u.code = !u.code; saveUi(); render(true); } }, 'code'),
+    h('button', { class: 'tog' + (u.out ? ' off' : ''), title: 'show/hide output', onclick: () => { u.out = !u.out; saveUi(); render(true); } }, 'output'),
+    author, h('button', { title: 'Cmd/Ctrl+S: apply_edit → new CellVersion', onclick: () => saveCell(c, author.value) }, 'Save'),
+    h('button', { onclick: () => { state.openHist[c.id] = !state.openHist[c.id]; render(true); } }, 'History'),
+    h('button', { class: 'danger', onclick: () => delCell(c) }, '✕'));
+  const decl = h('div', { class: 'decl' }, 'inputs:', h('input', { value: c.declared_inputs.join(','), onchange: e => saveDecl(c, 'declared_inputs', e.target.value) }),
+    'outputs:', h('input', { value: c.declared_outputs.join(','), onchange: e => saveDecl(c, 'declared_outputs', e.target.value) }));
+  const kids = [head];
+  if (params.length) kids.push(h('div', { class: 'form' }, ...params.map(p => {
+    const sp = p.spec, cur = pyStr(p.raw); let input;
+    if (sp.type === 'boolean') input = h('input', { type: 'checkbox', checked: p.raw === 'True', onchange: e => setParam(c, p, e.target.checked) });
+    else if (sp.type === 'select') input = h('select', { onchange: e => setParam(c, p, sp.options.find(o => String(o) === e.target.value)) }, ...sp.options.map(o => h('option', { value: o, selected: String(o) === String(cur) }, String(o))));
+    else if (sp.type === 'slider') { const lab = h('span', { class: 'rv' }, cur); input = h('span', {}, h('input', { type: 'range', min: sp.min ?? 0, max: sp.max ?? 100, step: sp.step ?? 1, value: cur, oninput: e => lab.textContent = e.target.value, onchange: e => setParam(c, p, +e.target.value) }), ' ', lab); }
+    else if (sp.type === 'integer' || sp.type === 'number') input = h('input', { type: 'number', step: sp.type === 'integer' ? 1 : 'any', value: cur, onchange: e => setParam(c, p, +e.target.value) });
+    else input = h('input', { type: 'text', value: cur, onchange: e => setParam(c, p, e.target.value) });
+    return h('label', {}, p.name, input); })));
+  if (!u.code) kids.push(ta, decl);
+  if (!u.code && c.input_warnings?.length) kids.push(h('div', { class: 'warn' }, '⚠ ' + c.input_warnings.join(' · ')));
+  if (cr && !u.out && (cr.outputs.length || cr.error)) {
+    const out = h('div', { class: 'out' });
+    for (const o of cr.outputs) {
+      if (o.type === 'stream') out.append(h('span', { class: o.name === 'stderr' ? 'stderr' : '' }, o.text));
+      else if (o.type === 'execute_result' || o.type === 'display_data') { const d = o.data || {};
+        if (d['image/png']) out.append(h('img', { src: 'data:image/png;base64,' + d['image/png'], style: 'max-width:100%' })); else out.append(h('div', { class: 'res' }, d['text/plain'] ?? JSON.stringify(d))); }
+      else if (o.type === 'note') out.append(h('div', { class: 'note' }, o.text));
+      else if (o.type === 'truncated') out.append(h('div', { class: 'note' }, `… output truncated in DB; full copy: ${cr.full_output_path}`));
+    }
+    if (out.childNodes.length) kids.push(out);
+    if (cr.error) kids.push(h('pre', { class: 'err ' + (cr.failure_kind === 'infrastructure' ? 'infra' : '') },
+      `${cr.failure_kind === 'infrastructure' ? 'INFRASTRUCTURE FAILURE' : 'EXPERIMENT FAILURE'} · ${cr.error.type}: ${cr.error.message}` + (cr.error.failing_lineno ? `\nline ${cr.error.failing_lineno}: ${cr.error.failing_line}` : '') + (cr.error.traceback && cr.failure_kind !== 'infrastructure' ? '\n\n' + cr.error.traceback : '')));
+    kids.push(h('div', { class: 'decl' }, `last run: ${cr.status}${cr.duration ? ' · ' + cr.duration.toFixed(2) + 's' : ''}${cr.state_hash ? ' · state ' + cr.state_hash.slice(0, 10) : ''}`));
+  }
+  const hist = h('div', { class: 'hist' }, 'Loading…');
+  if (state.openHist[c.id]) { kids.push(hist); api('GET', `/cells/${c.id}/versions`).then(vs => { hist.replaceChildren(...vs.slice().reverse().map((v, i) => h('div', {},
+      h('b', {}, `${v.author}`), ` · ${new Date(v.created_at).toLocaleTimeString()} · ${v.id.slice(0, 8)} `, i === 0 ? h('em', {}, '(current)') : h('button', { onclick: () => revert(v) }, 'revert to this'),
+      v.diff ? h('pre', {}, v.diff) : h('pre', {}, v.source)))); }); }
+  return h('div', { class: `cell s-${c.status}` }, ...kids);
+}
+const auto = t => { t.style.height = 'auto'; t.style.height = Math.max(56, t.scrollHeight) + 'px'; };
+function render(keepFocus) {
+  const ae = document.activeElement; const keep = keepFocus && ae?.dataset?.cell ? { id: ae.dataset.cell, a: ae.selectionStart, b: ae.selectionEnd } : null;
+  _render(); if (keep) { const t = document.querySelector(`textarea[data-cell="${keep.id}"]`); if (t) { t.focus(); t.setSelectionRange(keep.a, keep.b); } } }
+function _render() {
+  const nb = $('#notebook'); const e = curEnv();
+  if (!e) { nb.replaceChildren(h('div', { class: 'empty' }, 'Create or select a paper environment to begin.')); renderPanel(); return; }
+  const lock = state.detail?.env_spec?.lockfile_hash;
+  const active = state.active;
+  const bar = h('div', { class: 'bar' },
+    h('button', { class: 'primary', disabled: !!active, onclick: () => startRun('all') }, '▶▶ Run all'),
+    h('button', { disabled: !!active, onclick: () => startRun('clean'), title: 'fresh kernel, fixed seed, verification-eligible' }, '✓ Run clean'),
+    h('button', { disabled: !active, onclick: () => interrupt() }, '■ Interrupt'),
+    h('button', { disabled: !!active, onclick: () => restartKernel() }, '↻ Restart kernel'),
+    h('button', { onclick: () => addCell() }, '+ Code'),
+    h('label', { class: 'meta' }, h('input', { type: 'checkbox', id: 'stopOnFail', checked: true }), ' stop on fail'),
+    h('span', { style: 'flex:1' }),
+    h('span', { class: 'meta' }, lock ? `lock ${lock.slice(0, 10)} · seed ${state.detail.env_spec.seed}` : 'env not built'),
+    lock ? '' : h('button', { class: 'primary', onclick: () => buildEnv() }, 'Build environment'),
+    active ? h('span', { class: 'badge b-running' }, 'run active') : '');
+  nb.replaceChildren(bar, ...state.cells.map(renderCell), state.cells.length ? '' : h('div', { class: 'empty' }, 'No cells yet. Click “+ Code”.'));
+  renderPanel();
+}
+
+// ---------------------------------------------------------------- actions
+const addCell = guard(async () => { await api('POST', `/paper-envs/${state.envId}/cells`, { source: '# new cell\n', author: 'human' }); refreshSoon(); });
+const delCell = guard(async c => { if (confirm('Delete this cell?')) { await api('DELETE', `/cells/${c.id}`); refreshSoon(); } });
+const saveCell = guard(async (c, author = 'human') => { const src = state.dirty[c.id]; if (src === undefined) return;
+  const v = await api('PUT', `/cells/${c.id}/source`, { source: src, author }); state.sources[c.id] = src; delete state.dirty[c.id]; toast(`saved as new version ${v.id.slice(0, 8)} (${author}); downstream cells are stale`); softRefresh(); });
+const saveDecl = guard(async (c, key, val) => { await api('PATCH', `/cells/${c.id}/declarations`, { [key]: val.split(',').map(s => s.trim()).filter(Boolean) }); softRefresh(); });
+const revert = guard(async v => { await api('POST', `/cell-versions/${v.id}/revert`, { author: 'human' }); refreshSoon(); });
+const runCell = guard(async c => { if (state.dirty[c.id] !== undefined) await saveCell(c);
+  await api('POST', '/runs', { paper_env_id: state.envId, mode: 'cell', cell_id: c.id }); state.active = 'pending'; softRefresh(); });
+const startRun = guard(async mode => { for (const c of state.cells) if (state.dirty[c.id] !== undefined) await saveCell(c);
+  await api('POST', '/runs', { paper_env_id: state.envId, mode, stop_on_fail: $('#stopOnFail')?.checked ?? true, checkpoint: false }); state.active = 'pending'; softRefresh(); });
+const interrupt = guard(async () => { await api('POST', `/runs/${state.active}/interrupt`); });
+const restartKernel = guard(async () => { const r = await api('POST', `/paper-envs/${state.envId}/kernel/restart`); toast(r.note); refreshSoon(); });
+const buildEnv = guard(async () => { toast('building environment with uv…'); const r = await api('POST', `/paper-envs/${state.envId}/env/create`);
+  toast(r.status === 'success' ? 'environment ready' : `env build ${r.status}: ${r.error || ''}`, r.status !== 'success'); refreshSoon(); });
+
+$('#envSel').onchange = e => { state.envId = e.target.value; localStorage.envId = state.envId; state.sources = {}; state.dirty = {}; state.lastRunCells = {}; loadAll(); };
+$('#newEnvBtn').onclick = () => { const n = $('#newEnv'); n.style.display = n.style.display === 'none' ? 'block' : 'none'; };
+$('#neGo').onclick = guard(async () => {
+  const body = { alias: $('#neAlias').value.trim(), paper_hash: $('#neHash').value, seed: +$('#neSeed').value, build_env: $('#neBuild').checked };
+  if (!body.alias) return toast('alias required', true);
+  toast('creating…' + (body.build_env ? ' building environment (first time needs network)' : ''));
+  const r = await api('POST', '/paper-envs', body); state.envId = r.paper_env.id; state.sources = {}; $('#newEnv').style.display = 'none';
+  if (r.env_build && r.env_build.status !== 'success') toast('env build failed: ' + (r.env_build.error || r.env_build.conflict_details), true); else toast('paper env created');
+  await loadEnvs(); await loadAll(); connectWS(); });
+
+// ---------------------------------------------------------------- side panel
+const TABS = ['events', 'runs', 'files', 'datasets', 'env', 'blocked'];
+function renderTabs() { $('#tabs').replaceChildren(...TABS.map(t => h('button', { class: state.tab === t ? 'on' : '', onclick: () => { state.tab = t; renderPanel(); renderTabs(); } }, t))); }
+async function renderPanel() {
+  const p = $('#panel'); const t = state.tab;
+  if (t === 'events') {
+    p.replaceChildren(h('div', { class: 'meta' }, `live over WebSocket · ${state.events.length} shown`), ...state.events.slice(-150).reverse().map(e => h('div', { class: 'ev' + (/failed|died|blocked/.test(e.type) ? ' bad' : '') },
+      h('b', {}, `#${e.seq} ${e.type}`), ' ', summarize(e))));
+  } else if (t === 'runs') {
+    p.replaceChildren(...[...state.runs].reverse().map(r => h('div', { class: 'item' }, h('b', {}, r.mode), ' ', badge(r.status), r.verification_eligible ? ' ✓verification-eligible' : '', r.failure_kind ? ` (${r.failure_kind})` : '',
+      h('br'), h('small', {}, `nb v${r.notebook_version} · seed ${r.seed} · lock ${(r.env_lockfile_hash || '').slice(0, 8)} · ${r.approximate_split ? 'APPROX SPLIT · ' : ''}${r.id.slice(0, 8)}`),
+      r.message ? h('div', {}, h('small', {}, r.message)) : '', h('div', {}, h('button', { onclick: () => showJson(r) }, 'run record'), ' ', h('button', { onclick: guard(async () => { await loadRunOutputs(r.id, true); render(true); }) }, 'show outputs'))))
+      , state.runs.length ? '' : h('div', { class: 'meta' }, 'no runs yet'));
+  } else if (t === 'files') {
+    if (!state.envId) return p.replaceChildren('no env');
+    const files = await api('GET', `/paper-envs/${state.envId}/files`); const enc = f => f.split('/').map(encodeURIComponent).join('/');
+    const pick = h('input', { type: 'file', multiple: true, onchange: guard(async e => { for (const f of e.target.files) {
+      const r = await fetch(`/paper-envs/${state.envId}/files/${enc(f.name)}`, { method: 'PUT', body: f }); if (!r.ok) throw new Error((await r.json()).detail || r.statusText); }
+      toast('uploaded'); renderPanel(); }) });
+    p.replaceChildren(h('div', { class: 'meta' }, 'Cells run inside this folder: open("data.csv") finds uploads, and files your code writes show up here.'), h('div', { class: 'row' }, pick),
+      ...files.map(f => h('div', { class: 'fileitem' }, h('a', { href: `/paper-envs/${state.envId}/files/${enc(f.path)}`, download: f.path.split('/').pop() }, f.path), h('small', {}, `${f.size} B`),
+        h('button', { class: 'danger', onclick: guard(async () => { await api('DELETE', `/paper-envs/${state.envId}/files/${enc(f.path)}`); renderPanel(); }) }, '✕'))),
+      files.length ? '' : h('div', { class: 'meta' }, 'empty'), h('button', { onclick: () => renderPanel() }, 'refresh'));
+  } else if (t === 'datasets') {
+    const ds = await api('GET', '/datasets'); const path = h('input', { placeholder: '/absolute/path/to/file-or-dir' }), name = h('input', { placeholder: 'name' }), ver = h('input', { placeholder: 'v1', value: 'v1' });
+    p.replaceChildren(h('div', { class: 'row' }, name, ver), h('div', { class: 'row' }, path, h('button', { class: 'primary', onclick: guard(async () => { await api('POST', '/datasets/upload', { name: name.value, version: ver.value, path: path.value }); toast('uploaded to cache'); renderPanel(); }) }, 'Upload')),
+      h('div', { class: 'meta' }, 'Declare a dataset on this env so cells can call datasets.resolve("name@v1")'),
+      ...ds.map(d => { const declared = curEnv()?.dataset_ids?.includes(d.dataset_id);
+        return h('div', { class: 'item' }, h('b', {}, d.dataset_id), ' ', h('span', { class: 'badge b-' + (d.status === 'verified' ? 'success' : /corrupt|upstream/.test(d.status) ? 'failed' : 'pending') }, d.status),
+          h('br'), h('small', {}, `${d.source_type} · ${d.size_bytes} B · ${d.files.length} file(s)`), h('div', {},
+            h('button', { onclick: guard(async () => { await api('POST', `/datasets/${d.dataset_id}/fetch`); renderPanel(); }) }, 'fetch'), ' ',
+            h('button', { onclick: guard(async () => { const r = await api('POST', `/datasets/${d.dataset_id}/verify`); toast(r.ok ? 'verified' : 'mismatch: ' + r.mismatches.join('; '), !r.ok); renderPanel(); }) }, 'verify'), ' ',
+            h('button', { onclick: guard(async () => { const ids = new Set(curEnv().dataset_ids); declared ? ids.delete(d.dataset_id) : ids.add(d.dataset_id);
+              await api('PUT', `/paper-envs/${state.envId}/datasets`, { dataset_ids: [...ids] }); await loadEnvs(); renderPanel(); }) }, declared ? 'undeclare' : 'declare on env'))); }));
+  } else if (t === 'env') {
+    const d = state.detail; if (!d) return p.replaceChildren('no env');
+    const name = h('input', { placeholder: 'package' }), ver = h('input', { placeholder: 'version (optional)' });
+    const op = (path, body) => guard(async () => { toast('working…'); const r = await api('POST', `/paper-envs/${state.envId}/env/${path}`, body); toast(`${path}: ${r.status}${r.failing_package ? ' · ' + r.failing_package : ''}`, r.status === 'failed'); if (r.conflict_details) showJson(r); refreshSoon(); });
+    p.replaceChildren(h('div', { class: 'item' }, h('b', {}, 'EnvSpec'), h('pre', { class: 'json' }, JSON.stringify(d.env_spec, null, 1))),
+      h('div', { class: 'row' }, name, ver),
+      h('div', { class: 'row' }, h('button', { onclick: () => op('install', { name: name.value, version: ver.value || null })() }, 'install'), h('button', { onclick: () => op('pin', { name: name.value, version: ver.value })() }, 'pin'),
+        h('button', { onclick: () => op('rebuild')() }, 'rebuild'), h('button', { onclick: guard(async () => showJson(await api('GET', `/paper-envs/${state.envId}/env/lockfile`))) }, 'lockfile'),
+        h('button', { onclick: guard(async () => showJson(await api('GET', `/paper-envs/${state.envId}/env/hardware`))) }, 'hardware')),
+      h('div', { class: 'meta' }, 'Packages are installed only here, never from a cell.'));
+  } else if (t === 'blocked') {
+    const bl = await api('GET', '/blocked'); p.replaceChildren(h('div', { class: 'meta' }, 'Actions paused by the pre-execute hook. Start the API with a hook to see some.'),
+      ...bl.map(b => h('div', { class: 'item' }, h('b', {}, b.kind), ' ', badge('blocked'), h('div', {}, h('small', {}, `${b.decision}: ${b.reason}`)), h('pre', { class: 'json' }, JSON.stringify(b.payload, null, 1)),
+        ['allow', 'deny'].map(dn => h('button', { onclick: guard(async () => { await api('POST', `/blocked/${b.id}/resolve`, { decision: dn, reason: 'from UI' }); renderPanel(); refreshSoon(); }) }, dn)))), bl.length ? '' : h('div', { class: 'meta' }, 'nothing pending'));
+  }
+}
+function showJson(obj) { state.tab = '__json'; $('#panel').replaceChildren(h('button', { onclick: () => { state.tab = 'runs'; renderTabs(); renderPanel(); } }, '← back'), h('pre', { class: 'json' }, JSON.stringify(obj, null, 2))); }
+function summarize(e) { const p = e.payload || {};
+  if (e.type === 'cell_output') return (p.text || '').trim().slice(0, 80);
+  if (e.type === 'cell_failed') return `${p.exception_type}: ${p.message}`;
+  if (e.type === 'kernel_died') return `${p.kind}: ${p.message}`;
+  if (e.type === 'run_finished') return `${p.status}${p.message ? ' · ' + p.message : ''}`;
+  if (e.type === 'cell_edited') return `${p.change} by ${p.author || '?'}`;
+  return Object.entries(p).filter(([k, v]) => typeof v !== 'object' && k !== 'diff').slice(0, 3).map(([k, v]) => `${k}=${String(v).slice(0, 24)}`).join(' '); }
+
+// ---------------------------------------------------------------- live events
+async function connectWS() {
+  if (state.ws) state.ws.close();
+  const hist = await api('GET', '/events/history?limit=10000'); state.lastSeq = hist.length ? hist[hist.length - 1].seq : 0; state.events = hist.slice(-100);
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/events?after_seq=${state.lastSeq}`); state.ws = ws;
+  ws.onmessage = m => { const e = JSON.parse(m.data); state.lastSeq = e.seq; state.events.push(e); if (state.events.length > 400) state.events.shift();
+    if (e.paper_env_id === state.envId || e.paper_env_id == null) { if (e.type === 'cell_started') { state.active = state.active || 'live'; const c = state.cells.find(c => c.id === e.payload.cell_id); if (c) { c.status = 'running'; delete state.lastRunCells[c.id]; render(true); } }
+      if (e.type === 'cell_output') { const cr = state.lastRunCells[e.payload.cell_id] ||= { outputs: [], cell_id: e.payload.cell_id }; if (e.payload.type === 'stream') { const last = cr.outputs[cr.outputs.length - 1];
+          if (last && last.type === 'stream' && last.name === e.payload.name && last._ow) { last.text = e.payload.text; last._ow = !!e.payload.overwrite; }
+          else cr.outputs.push({ type: 'stream', name: e.payload.name, text: e.payload.text, _ow: !!e.payload.overwrite}); } else cr.outputs.push({ type: 'display_data', data: e.payload.data }); render(true); }
+      if (/cell_finished|cell_failed|kernel_died|run_finished|cell_edited|env_changed|action_/.test(e.type)) softRefresh(); }
+    if (state.tab === 'events') renderPanel(); };
+  ws.onclose = () => setTimeout(() => state.ws === ws && connectWS(), 2000);
+}
+
+(async () => { renderTabs();
+  try { const h_ = await api('GET', '/health'); $('#health').textContent = `backend: ${h_.backend.backend} · gpu: ${h_.backend.gpu}`; } catch { $('#health').textContent = 'API unreachable'; }
+  await guard(loadEnvs)(); await guard(loadAll)(); connectWS(); setInterval(() => { if (state.active) softRefresh(); }, 2500); })();
+</script>
+</body>
+</html>

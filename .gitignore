@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 paper_env_data/
 demo_data/
+api_data/

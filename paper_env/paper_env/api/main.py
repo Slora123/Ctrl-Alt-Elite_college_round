@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from ..config import Settings
 from ..container import App, build_app
@@ -26,6 +27,11 @@ def create_api(core: App | None = None) -> FastAPI:
     api.state.core = core
     install_error_handlers(api)
     api.include_router(router)
+
+    @api.get("/", include_in_schema=False)
+    def ui():
+        return FileResponse(Path(__file__).parent / "static" / "index.html")
+
     return api
 
 

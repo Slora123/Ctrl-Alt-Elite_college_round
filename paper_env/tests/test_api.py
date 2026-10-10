@@ -145,3 +145,30 @@ def test_checkpoint_resume_over_http(api):
     assert len(cps) == 2 and cps[0]["saved"] == ["v"]
     out = c.post(f"/checkpoints/{cps[0]['id']}/resume", json={"continue_run": True}).json()
     assert out["resume"]["restored"] == ["v"] and out["run"]["status"] == "success"
+
+
+def test_files_workspace_upload_download_and_confinement(api):
+    c, core, t = api
+    pid = ready_env(c, core, t, "files-env")
+    assert c.put(f"/paper-envs/{pid}/files/data/in.csv", content=b"a,b\n1,2\n").status_code == 201
+    assert [f["path"] for f in c.get(f"/paper-envs/{pid}/files").json()] == ["data/in.csv"]
+    assert c.get(f"/paper-envs/{pid}/files/data/in.csv").content == b"a,b\n1,2\n"
+    for bad in ("../escape.txt", "%2e%2e/escape.txt", "a/../../x"):
+        assert c.put(f"/paper-envs/{pid}/files/{bad}", content=b"x").status_code in (404, 422)
+    assert not (core.settings.env_dir(pid) / "escape.txt").exists()
+    # cells run inside the workspace: uploads are visible, and cell-written files appear in the listing
+    c.post(f"/paper-envs/{pid}/cells", json={"source": "print(open('data/in.csv').read().strip().splitlines())\nopen('out.txt','w').write('made by cell')"})
+    run = c.post("/runs", json={"paper_env_id": pid, "mode": "all", "wait": True}).json()
+    assert run["status"] == "success"
+    assert c.get(f"/runs/{run['id']}/cells").json()[0]["outputs"][0]["text"] == "['a,b', '1,2']\n"
+    assert c.get(f"/paper-envs/{pid}/files/out.txt").content == b"made by cell"
+    assert c.delete(f"/paper-envs/{pid}/files/out.txt").status_code == 204
+    assert c.get(f"/paper-envs/{pid}/files/out.txt").status_code == 404
+
+
+def test_upload_size_cap(api):
+    c, core, t = api
+    pid = ready_env(c, core, t, "cap-env")
+    core.settings.max_upload_bytes = 10
+    assert c.put(f"/paper-envs/{pid}/files/big.bin", content=b"x" * 11).status_code == 413
+    assert c.get(f"/paper-envs/{pid}/files").json() == []

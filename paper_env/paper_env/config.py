@@ -22,6 +22,7 @@ class Settings:
     cache_max_bytes: int = 50 * 1024 * 1024 * 1024
     checkpoint_after_each_cell: bool = False
     kernel_start_timeout_s: float = 90.0
+    max_upload_bytes: int = 2 * 1024 ** 3
     interrupt_grace_s: float = 5.0  # after a timeout interrupt, how long before the kernel is killed
 
     def __post_init__(self) -> None:
@@ -51,6 +52,10 @@ class Settings:
 
     def runs_dir(self, run_id: str) -> Path:
         return self.data_dir / "runs" / run_id
+
+    def files_dir(self, paper_env_id: str) -> Path:
+        """The kernel's working directory: uploaded files appear here, and files cells write show up in the Files panel."""
+        return self.env_dir(paper_env_id) / "files"
 
     def checkpoints_dir(self, paper_env_id: str) -> Path:
         return self.data_dir / "checkpoints" / paper_env_id
