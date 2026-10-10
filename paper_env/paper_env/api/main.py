@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from ..config import Settings
 from ..container import App, build_app
@@ -28,9 +29,20 @@ def create_api(core: App | None = None) -> FastAPI:
     install_error_handlers(api)
     api.include_router(router)
 
+    static = Path(__file__).parent / "static"
+    built = static / "app"
+    if (built / "index.html").is_file():  # the Vite build (CodeMirror + rich outputs + widgets)
+        api.mount("/ui", StaticFiles(directory=built, html=True), name="ui")
+
     @api.get("/", include_in_schema=False)
     def ui():
-        return FileResponse(Path(__file__).parent / "static" / "index.html")
+        if (built / "index.html").is_file():
+            return RedirectResponse("/ui/")
+        return FileResponse(static / "index.html")  # legacy single-file page, used until the frontend is built
+
+    @api.get("/legacy", include_in_schema=False)
+    def legacy_ui():
+        return FileResponse(static / "index.html")
 
     return api
 
