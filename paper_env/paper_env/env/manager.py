@@ -168,6 +168,17 @@ class EnvManager:
     def hardware_info(self, paper_env_id: str) -> dict[str, Any]:
         return collect_hardware_info(self.python_path(paper_env_id))
 
+    def cleanup_temp(self) -> list[str]:
+        """Remove half-built environments (``*.staging`` / ``*.old``) left by a crash. Called at startup."""
+        removed = []
+        root = self.settings.data_dir / "envs"
+        if root.is_dir():
+            for d in root.iterdir():
+                if d.is_dir() and d.name.endswith((".staging", ".old")):
+                    shutil.rmtree(d, ignore_errors=True)
+                    removed.append(d.name)
+        return removed
+
     def delete_env_files(self, paper_env_id: str) -> None:
         shutil.rmtree(self.settings.env_dir(paper_env_id), ignore_errors=True)
 

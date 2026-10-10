@@ -10,6 +10,8 @@ dependencies = [
     "packaging>=26.3",
     "httpx>=0.28.1",
     "jupyter-client>=8.10.0",
+    "fastapi>=0.143.0",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [dependency-groups]

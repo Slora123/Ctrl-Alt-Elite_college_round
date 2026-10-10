@@ -4,6 +4,7 @@ Same notebook version run twice => two Run rows; nothing is ever overwritten.
 """
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,7 +12,7 @@ from typing import Any
 from ..backends import ComputeBackend
 from ..config import Settings
 from ..domain import (
-    ActionKind, BlockedAction, Cell, CellRun, CellStatus, EventType, FailureKind, Run, RunMode, RunStatus, utcnow,
+    ActionKind, BlockedAction, Cell, CellRun, CellStatus, EventType, FailureKind, Run, RunMode, RunStatus, new_id, utcnow,
 )
 from ..env import EnvManager
 from ..events import EventBus
@@ -25,6 +26,10 @@ class EnvNotReady(RuntimeError):
     pass
 
 
+class RunInProgress(RuntimeError):
+    pass
+
+
 @dataclass
 class _Plan:
     cell_ids: list[str]
@@ -33,6 +38,7 @@ class _Plan:
     cell_timeout: float | None
     deadline: float  # monotonic
     run_timeout: float = 0.0
+    checkpoint: bool = False
     crs: list[CellRun] = field(default_factory=list)
 
 
@@ -43,6 +49,9 @@ class RunService:
         self.settings, self._uow, self.bus, self.gate = settings, uow_factory, bus, gate
         self.runner, self.notebook, self.envs, self.backend, self.datasets = runner, notebook, envs, backend, datasets
         self._plans: dict[str, _Plan] = {}
+        self._active: dict[str, str] = {}  # paper_env_id -> run_id (one run per kernel at a time)
+        self._active_lock = threading.Lock()
+        self.checkpoints: Any | None = None  # CheckpointService, attached by the composition root
         # blocked cells resume through the run so the rest of the plan continues
         gate.register_executor(ActionKind.EXECUTE_CELL, self._resume_blocked_cell)
         gate.register_on_deny(ActionKind.EXECUTE_CELL, self._deny_blocked_cell)
@@ -61,10 +70,11 @@ class RunService:
             return u.runs.list_cell_runs(run_id)
 
     # ------------------------------------------------------------------ public modes
-    def run_cell(self, cell_id: str, *, seed: int | None = None, timeout: float | None = None) -> Run:
+    def run_cell(self, cell_id: str, *, seed: int | None = None, timeout: float | None = None,
+                 run_id: str | None = None) -> Run:
         """Run one cell in the live kernel (starting one if needed). Downstream cells become stale."""
         cell = self.notebook.get_cell(cell_id)
-        run = self._begin(cell.paper_env_id, RunMode.CELL, seed, fresh_kernel=False)
+        run = self._begin(cell.paper_env_id, RunMode.CELL, seed, fresh_kernel=False, run_id=run_id)
         if run.status != RunStatus.RUNNING:
             return run
         run = self._execute_plan(run, [cell_id], stop_on_fail=True, cell_timeout=timeout)
@@ -72,35 +82,57 @@ class RunService:
         return run
 
     def run_until(self, cell_id: str, *, seed: int | None = None, cell_timeout: float | None = None,
-                  run_timeout: float | None = None, stop_on_fail: bool = True) -> Run:
+                  run_timeout: float | None = None, stop_on_fail: bool = True, checkpoint: bool | None = None,
+                  run_id: str | None = None) -> Run:
         """Top to bottom in the live kernel, up to and including ``cell_id``. Later cells become stale."""
         target = self.notebook.get_cell(cell_id)
         ids = [c.id for c in self.notebook.list_cells(target.paper_env_id) if c.position <= target.position]
-        run = self._begin(target.paper_env_id, RunMode.UNTIL, seed, fresh_kernel=False, run_timeout=run_timeout)
+        run = self._begin(target.paper_env_id, RunMode.UNTIL, seed, fresh_kernel=False, run_timeout=run_timeout, run_id=run_id)
         if run.status != RunStatus.RUNNING:
             return run
-        run = self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout)
+        run = self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout,
+                                  checkpoint=checkpoint)
         self.notebook.mark_downstream_stale(cell_id)
         return run
 
     def run_all(self, paper_env_id: str, *, stop_on_fail: bool = True, seed: int | None = None,
-                cell_timeout: float | None = None, run_timeout: float | None = None) -> Run:
+                cell_timeout: float | None = None, run_timeout: float | None = None,
+                checkpoint: bool | None = None, run_id: str | None = None) -> Run:
         """Every cell in order in the live kernel. With ``stop_on_fail`` the rest become ``skipped``."""
-        run = self._begin(paper_env_id, RunMode.ALL, seed, fresh_kernel=False, run_timeout=run_timeout)
+        run = self._begin(paper_env_id, RunMode.ALL, seed, fresh_kernel=False, run_timeout=run_timeout, run_id=run_id)
         if run.status != RunStatus.RUNNING:
             return run
         ids = [c.id for c in self.notebook.list_cells(paper_env_id)]
-        return self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout)
+        return self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout,
+                                  checkpoint=checkpoint)
 
     def run_clean(self, paper_env_id: str, *, stop_on_fail: bool = True, seed: int | None = None,
-                  cell_timeout: float | None = None, run_timeout: float | None = None) -> Run:
+                  cell_timeout: float | None = None, run_timeout: float | None = None,
+                  checkpoint: bool | None = None, run_id: str | None = None) -> Run:
         """Always a brand-new kernel, fixed seed, top to bottom. The ONLY mode that can be
         ``verification_eligible`` (and only if it ran to a real conclusion)."""
-        run = self._begin(paper_env_id, RunMode.CLEAN, seed, fresh_kernel=True, verification_eligible=True)
+        run = self._begin(paper_env_id, RunMode.CLEAN, seed, fresh_kernel=True, verification_eligible=True, run_id=run_id)
         if run.status != RunStatus.RUNNING:
             return run
         ids = [c.id for c in self.notebook.list_cells(paper_env_id)]
-        return self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout)
+        return self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout, run_timeout=run_timeout,
+                                  checkpoint=checkpoint)
+
+    def continue_from(self, checkpoint_id: str, *, stop_on_fail: bool = True, cell_timeout: float | None = None,
+                      run_timeout: float | None = None, checkpoint: bool | None = None):
+        """Restore a checkpoint into a fresh kernel, then run the remaining cells as a new Run. Returns
+        (ResumeResult, Run). Not verification-eligible: it did not start from a clean kernel."""
+        if self.checkpoints is None:
+            raise RuntimeError("checkpoint service is not configured")
+        cp = self.checkpoints.get(checkpoint_id)
+        res = self.checkpoints.resume_from(checkpoint_id)
+        ids = [c.id for c in self.notebook.list_cells(cp.paper_env_id) if c.position > cp.cell_position]
+        run = self._begin(cp.paper_env_id, RunMode.ALL, cp.seed, fresh_kernel=False)
+        if run.status != RunStatus.RUNNING:
+            return res, run
+        run = self._execute_plan(run, ids, stop_on_fail=stop_on_fail, cell_timeout=cell_timeout,
+                                 run_timeout=run_timeout, checkpoint=checkpoint)
+        return res, run
 
     def interrupt(self, run_id: str) -> bool:
         """Interrupt whatever the run is executing; the run ends ``cancelled`` and the rest is skipped."""
@@ -109,14 +141,36 @@ class RunService:
 
     # ------------------------------------------------------------------ run lifecycle
     def _begin(self, paper_env_id: str, mode: RunMode, seed: int | None, *, fresh_kernel: bool,
-               verification_eligible: bool = False, run_timeout: float | None = None) -> Run:
+               verification_eligible: bool = False, run_timeout: float | None = None,
+               run_id: str | None = None) -> Run:
+        rid = run_id or new_id()
+        with self._active_lock:
+            if paper_env_id in self._active:
+                raise RunInProgress(f"run {self._active[paper_env_id]} is still active for this paper environment")
+            self._active[paper_env_id] = rid
+        try:
+            return self._begin_locked(paper_env_id, mode, seed, fresh_kernel, verification_eligible, rid)
+        except BaseException:
+            self._release(paper_env_id, rid)
+            raise
+
+    def _release(self, paper_env_id: str, run_id: str) -> None:
+        with self._active_lock:
+            if self._active.get(paper_env_id) == run_id:
+                del self._active[paper_env_id]
+
+    def active_run_id(self, paper_env_id: str) -> str | None:
+        return self._active.get(paper_env_id)
+
+    def _begin_locked(self, paper_env_id: str, mode: RunMode, seed: int | None, fresh_kernel: bool,
+                      verification_eligible: bool, rid: str) -> Run:
         with self._uow() as u:
             env = u.paper_envs.get(paper_env_id)
             spec = u.paper_envs.get_spec(env.env_spec_id)
         if not spec.lockfile_hash:
             raise EnvNotReady(f"environment for {env.alias!r} has no lockfile yet; build it with create_env first")
         seed = spec.seed if seed is None else seed
-        run = Run(paper_env_id=paper_env_id, notebook_version=env.current_notebook_version,
+        run = Run(id=rid, paper_env_id=paper_env_id, notebook_version=env.current_notebook_version,
                   env_lockfile_hash=spec.lockfile_hash, mode=mode, seed=seed, backend=self.backend.capabilities().get("backend", "?"),
                   started_at=utcnow(), status=RunStatus.RUNNING, verification_eligible=verification_eligible)
         report = None
@@ -132,9 +186,9 @@ class RunService:
                                 extra={"preflight_problems": [p.__dict__ for p in report.problems]})
         try:
             if fresh_kernel:
-                session = self.runner.start_session(paper_env_id, seed, **self._kernel_opts(run, env))
+                session = self.runner.start_session(paper_env_id, seed, **self._kernel_opts(run.id, env))
             else:
-                session = self.runner.ensure_session(paper_env_id, seed, **self._kernel_opts(run, env))
+                session = self.runner.ensure_session(paper_env_id, seed, **self._kernel_opts(run.id, env))
         except SessionError as e:
             return self._finish(run, RunStatus.INFRA_FAILED, FailureKind.INFRASTRUCTURE, f"could not start kernel: {e}")
         run.kernel_session_id = session.id
@@ -155,11 +209,11 @@ class RunService:
             "approximate_split": run.approximate_split}, paper_env_id=paper_env_id, run_id=run.id)
         return run
 
-    def _kernel_opts(self, run: Run, env) -> dict[str, Any]:
-        opts: dict[str, Any] = {"workdir": self.settings.runs_dir(run.id) / "work"}
+    def _kernel_opts(self, run_id: str, env) -> dict[str, Any]:
+        opts: dict[str, Any] = {"workdir": self.settings.runs_dir(run_id) / "work"}
         if self.datasets is not None:
             ids = list(env.dataset_ids) + self._derived_ids(env.id)
-            manifest = self.datasets.prepare_mount(env.id, run.id, ids)
+            manifest = self.datasets.prepare_mount(env.id, run_id, ids)
             opts["extra_env"] = {"PAPER_ENV_DATASETS_MANIFEST": str(manifest)}
         return opts
 
@@ -179,6 +233,7 @@ class RunService:
             u.runs.update_run(run)
         if self.datasets is not None:
             self.datasets.release(run.id)
+        self._release(run.paper_env_id, run.id)
         self.bus.publish(EventType.RUN_FINISHED, {
             "run_id": run.id, "status": status.value, "failure_kind": kind.value if kind else None,
             "message": message, **(extra or {})}, paper_env_id=run.paper_env_id, run_id=run.id)
@@ -195,10 +250,22 @@ class RunService:
             u.cells.update_cell(c)
         return cr
 
-    def _execute_plan(self, run: Run, cell_ids: list[str], *, stop_on_fail: bool, cell_timeout: float | None,
-                      run_timeout: float | None = None, plan: _Plan | None = None) -> Run:
+    def _execute_plan(self, run: Run, cell_ids: list[str], **kw: Any) -> Run:
+        try:
+            return self._execute_plan_inner(run, cell_ids, **kw)
+        except Exception as e:  # never leave the env locked or the run 'running' forever
+            self._plans.pop(run.id, None)
+            if run.finished_at is None:
+                self._finish(run, RunStatus.INFRA_FAILED, FailureKind.INFRASTRUCTURE,
+                             f"internal error: {type(e).__name__}: {self.bus.scrubber.scrub(str(e))[:300]}")
+            raise
+
+    def _execute_plan_inner(self, run: Run, cell_ids: list[str], *, stop_on_fail: bool, cell_timeout: float | None,
+                            run_timeout: float | None = None, checkpoint: bool | None = None,
+                            plan: _Plan | None = None) -> Run:
         total = run_timeout if run_timeout is not None else self.settings.run_timeout_s
-        plan = plan or _Plan(cell_ids, 0, stop_on_fail, cell_timeout, time.monotonic() + total, total)
+        plan = plan or _Plan(cell_ids, 0, stop_on_fail, cell_timeout, time.monotonic() + total, total,
+                             self.settings.checkpoint_after_each_cell if checkpoint is None else checkpoint)
         while plan.next_index < len(plan.cell_ids):
             cid = plan.cell_ids[plan.next_index]
             remaining = plan.deadline - time.monotonic()
@@ -211,6 +278,8 @@ class RunService:
             cr = self.runner.execute_cell(run, cid, timeout=timeout)
             plan.next_index += 1
             plan.crs.append(cr)
+            if plan.checkpoint and cr.status == CellStatus.SUCCESS and self.checkpoints is not None:
+                self.checkpoints.save(run, cr)
             if cr.status == CellStatus.BLOCKED:
                 self._plans[run.id] = plan
                 run.status = RunStatus.BLOCKED
@@ -286,4 +355,5 @@ class RunService:
                 return self._abort_rest(run, plan, RunStatus.INFRA_FAILED, FailureKind.INFRASTRUCTURE, cr.error.message)
             if plan.stop_on_fail:
                 return self._abort_rest(run, plan, RunStatus.FAILED, FailureKind.EXPERIMENT, "resumed cell failed", cr.cell_id)
-        return self._execute_plan(run, plan.cell_ids, stop_on_fail=plan.stop_on_fail, cell_timeout=plan.cell_timeout, run_timeout=plan.run_timeout, plan=plan)
+        return self._execute_plan(run, plan.cell_ids, stop_on_fail=plan.stop_on_fail, cell_timeout=plan.cell_timeout, run_timeout=plan.run_timeout,
+                                  checkpoint=plan.checkpoint, plan=plan)
