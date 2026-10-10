@@ -77,7 +77,10 @@ class ActionGate:
 
     def check(self, action: Action) -> None:
         """Raise ``ActionBlocked`` (after persisting it) unless the hook allows."""
-        decision = self.hook.check(action)
+        try:
+            decision = self.hook.check(action)
+        except Exception as e:  # fail closed: a crashing guardrail must never mean "allow"
+            decision = Decision.deny(f"pre-execute hook raised {type(e).__name__}; failing closed")
         if decision.kind == DecisionKind.ALLOW:
             return
         blocked = BlockedAction(
@@ -93,6 +96,10 @@ class ActionGate:
             }, paper_env_id=action.paper_env_id, run_id=action.run_id)
         self.bus.dispatch(ev)
         raise ActionBlocked(blocked.id, decision, action)
+
+    def list_pending(self, paper_env_id: str | None = None) -> list[BlockedAction]:
+        with self._uow() as u:
+            return u.blocked.list_pending(paper_env_id)
 
     def resume_blocked(self, action_id: str, decision: Decision) -> Any:
         """Apply a (human/harness) decision to a paused action.

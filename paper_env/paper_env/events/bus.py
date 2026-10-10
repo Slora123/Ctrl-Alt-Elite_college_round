@@ -18,6 +18,7 @@ from typing import Any, Callable, Iterable
 from ..domain import Event, EventType
 from ..repos import UnitOfWork, UnitOfWorkFactory
 from ..security import Scrubber
+from .types import validate_payload
 
 log = logging.getLogger(__name__)
 Callback = Callable[[Event], None]
@@ -48,8 +49,9 @@ class EventBus:
     # ---- publishing ----
     def make(self, type: EventType, payload: dict[str, Any] | None = None, *,
              paper_env_id: str | None = None, run_id: str | None = None) -> Event:
+        payload = validate_payload(type, payload or {})
         return Event(type=type, paper_env_id=paper_env_id, run_id=run_id,
-                     payload=self.scrubber.scrub_obj(payload or {}))
+                     payload=self.scrubber.scrub_obj(payload))
 
     def append(self, uow: UnitOfWork, type: EventType, payload: dict[str, Any] | None = None, **kw) -> Event:
         """Persist inside the caller's unit of work. Call ``dispatch`` after commit."""

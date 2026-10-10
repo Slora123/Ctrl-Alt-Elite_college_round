@@ -3,17 +3,19 @@ import pytest
 from paper_env.domain import ActionKind, BlockedActionStatus, DecisionKind, EventType
 from paper_env.hooks import Action, ActionBlocked, Decision
 
+RS = {"run_id": "r", "mode": "all", "seed": 0, "notebook_version": 1}
+
 
 def test_publish_persists_scrubbed_and_notifies(stack):
     stack.scrubber.add_secrets(["very-secret-token"])
     got = []
     sub = stack.bus.subscribe(got.append, types=[EventType.ENV_CHANGED])
-    stack.bus.publish(EventType.RUN_STARTED, {"x": 1}, run_id="r")
-    ev = stack.bus.publish(EventType.ENV_CHANGED, {"note": "oops very-secret-token"}, paper_env_id="p")
+    stack.bus.publish(EventType.RUN_STARTED, RS, run_id="r")
+    ev = stack.bus.publish(EventType.ENV_CHANGED, {"op": "install", "note": "oops very-secret-token"}, paper_env_id="p")
     assert [e.seq for e in got] == [ev.seq]
     assert "very-secret-token" not in str(stack.bus.history()) and "[REDACTED]" in ev.payload["note"]
     sub.close()
-    stack.bus.publish(EventType.ENV_CHANGED, {})
+    stack.bus.publish(EventType.ENV_CHANGED, {"op": "install"})
     assert len(got) == 1
 
 
@@ -21,7 +23,7 @@ def test_bad_subscriber_does_not_break_publisher(stack):
     stack.bus.subscribe(lambda e: 1 / 0)
     ok = []
     stack.bus.subscribe(ok.append)
-    stack.bus.publish(EventType.RUN_STARTED)
+    stack.bus.publish(EventType.RUN_STARTED, RS)
     assert len(ok) == 1
 
 
