@@ -15,6 +15,7 @@ class Settings:
     llm_chain: str = ""  # comma-separated LiteLLM model ids, tried in order, e.g. "groq/qwen/qwen3-32b,ollama/qwen2.5:7b"
     llm_api_key: str = ""
     github_token: str = ""
+    worker_registration_token: str = ""  # if empty, registration is only open when CG_ENV=dev
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "Settings":
@@ -30,4 +31,5 @@ class Settings:
             llm_chain=e.get("CG_LLM_CHAIN", d.llm_chain),
             llm_api_key=e.get("CG_LLM_API_KEY", d.llm_api_key),
             github_token=e.get("CG_GITHUB_TOKEN", d.github_token),
+            worker_registration_token=e.get("CG_WORKER_REGISTRATION_TOKEN", d.worker_registration_token),
         )

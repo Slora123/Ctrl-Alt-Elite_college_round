@@ -19,6 +19,11 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def as_utc(dt: datetime) -> datetime:
+    """Databases differ: SQLite hands back naive datetimes, Postgres aware ones. Treat naive as UTC."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
 class Source(BaseModel):
     kind: Literal["paper", "repo", "readme", "human"]
     ref: str

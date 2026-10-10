@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from crisisgrid_core.ids import new_id
-from crisisgrid_core.models import Gap, utcnow
+from crisisgrid_core.models import Gap, RunResult, Verdict, utcnow
 from crisisgrid_core.papers import ArtifactInventory, ParsedPaper
 from crisisgrid_core.routing import RouteDecision
 
@@ -43,7 +43,7 @@ class PaperRecord(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
 
 
-RunStatus = Literal["running", "waiting_gate", "completed", "failed"]
+RunStatus = Literal["running", "waiting_gate", "waiting_jobs", "completed", "failed"]
 
 
 class RunState(BaseModel):
@@ -64,7 +64,12 @@ class RunState(BaseModel):
     assumptions_approved: bool = False
     hints: dict[str, str] = Field(default_factory=dict)
     caveats: list[str] = Field(default_factory=list)
-    execution: Literal["not_run"] = "not_run"  # P6+ replaces this with real run results
+    notebook: list[dict[str, str]] | None = None  # cells to run (imported .ipynb); None = nothing to execute yet
+    seeds: list[int] = Field(default_factory=lambda: [0, 1, 2])
+    job_ids: list[str] = Field(default_factory=list)
+    run_results: list[RunResult] = Field(default_factory=list)
+    verdicts: list[Verdict] = Field(default_factory=list)
+    execution: Literal["not_run", "clean_runs"] = "not_run"
     report: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

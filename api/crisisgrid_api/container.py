@@ -9,11 +9,13 @@ from .agents.artifact_finder import GitHubFetcher, RepoFetcher
 from .config import Settings
 from .db.base import make_session_factory
 from .db.event_store import SqlEventStore
+from .db.job_repo import SqlJobRepo
 from .db.llm_audit import SqlAuditLog
 from .db.pipeline_repos import SqlGateRepo, SqlPaperRepo, SqlRunRepo
 from .gateway.gateway import Gateway, Provider
 from .gateway.litellm_client import LiteLLMClient
 from .ingest.embed import Embedder, HashEmbedder
+from .jobs.service import JobService
 from .orchestration.gates import GateManager
 from .orchestration.pipeline import Orchestrator, PipelineDeps
 from .repos.interfaces import EventStore, GateRepo, PaperRepo, RunRepo
@@ -27,6 +29,7 @@ class AppContainer:
     events: EventStore
     gates: GateManager
     orchestrator: Orchestrator | None  # None when no LLM is configured: reading works, starting runs is refused
+    jobs: JobService
 
 
 def gateway_from_settings(settings: Settings, audit: SqlAuditLog) -> Gateway | None:
@@ -42,10 +45,12 @@ def build_container(engine: Engine, settings: Settings, *, gateway: Gateway | No
     factory = make_session_factory(engine)
     events, papers, runs, gate_repo = SqlEventStore(factory), SqlPaperRepo(factory), SqlRunRepo(factory), SqlGateRepo(factory)
     gates = GateManager(gate_repo, events)
+    jobs = JobService(SqlJobRepo(factory), events)
     gateway = gateway or gateway_from_settings(settings, SqlAuditLog(factory))
     orch = None
     if gateway is not None:
         orch = Orchestrator(PipelineDeps(
             gateway=gateway, embedder=embedder or HashEmbedder(), fetcher=fetcher or GitHubFetcher(token=settings.github_token or None),
-            papers=papers, runs=runs, gates=gates, events=events))
-    return AppContainer(papers=papers, runs=runs, gate_repo=gate_repo, events=events, gates=gates, orchestrator=orch)
+            papers=papers, runs=runs, gates=gates, events=events, jobs=jobs))
+        jobs.on_finished = lambda job: orch.on_job_finished(job.run_id)  # reaper / cancel path
+    return AppContainer(papers=papers, runs=runs, gate_repo=gate_repo, events=events, gates=gates, orchestrator=orch, jobs=jobs)

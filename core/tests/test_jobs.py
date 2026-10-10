@@ -55,3 +55,9 @@ def test_staleness():
     t = datetime(2026, 1, 1, tzinfo=timezone.utc)
     assert not is_stale(t, t + timedelta(seconds=30), timedelta(seconds=60))
     assert is_stale(t, t + timedelta(seconds=61), timedelta(seconds=60))
+
+
+def test_staleness_tolerates_naive_datetimes_from_sqlite():
+    naive = datetime(2026, 1, 1)
+    aware = datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc)
+    assert is_stale(naive, aware, timedelta(seconds=60))

@@ -141,3 +141,9 @@ def test_uuid7():
 def test_uuid7_is_strictly_increasing_even_within_a_millisecond():
     ids = [uuid7() for _ in range(20000)]
     assert ids == sorted(ids) and len(set(ids)) == len(ids)
+
+
+@pytest.mark.parametrize("reported_name", ["top1", "Top-1", "TOP_1", "top 1"])
+def test_metric_names_match_regardless_of_formatting(reported_name):
+    c = CLAIM.model_copy(update={"metric": reported_name})
+    assert verify_claim(c, runs([91.2, 91.3, 91.25])).status == "reproduced"

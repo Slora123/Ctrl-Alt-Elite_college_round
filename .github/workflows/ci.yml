@@ -31,3 +31,19 @@ jobs:
         run: mypy ${{ matrix.package == 'core' && 'crisisgrid_core' || 'crisisgrid_api' }}
       - name: Test
         run: pytest
+
+  paper-env:
+    # paper_env uses POSIX-only APIs (fcntl) and needs uv; it cannot run on Windows. It was NOT verified when this job was
+    # added, so a failure here is informative, not blocking, until the baseline is known.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: paper_env
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install
+        run: uv sync
+      - name: Test
+        run: uv run pytest

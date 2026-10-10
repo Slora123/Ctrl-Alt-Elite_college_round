@@ -12,6 +12,7 @@ from .container import AppContainer, build_container
 from .db.base import make_engine
 from .logging import configure_logging
 from .routes import build_router
+from .routes_workers import build_worker_router
 
 log = logging.getLogger("crisisgrid.api")
 
@@ -33,6 +34,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, c
     app.state.engine = engine
     app.state.container = container
     app.include_router(build_router(container))
+    app.include_router(build_worker_router(container, settings))
 
     @app.get("/health")
     def health(response: Response) -> dict[str, Any]:

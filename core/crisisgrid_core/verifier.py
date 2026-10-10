@@ -5,6 +5,7 @@ silently dropped: a caller that hands over interactive runs has a bug we want to
 """
 from __future__ import annotations
 
+import re
 import statistics
 from collections.abc import Sequence
 from typing import Any
@@ -14,6 +15,11 @@ from .models import Claim, RunResult, Verdict, VerdictStatus
 __all__ = ["verify_claim", "IneligibleRunError", "MIN_SEEDS"]
 
 MIN_SEEDS = 3
+
+
+def _norm(name: str) -> str:
+    """'Top-1 Accuracy', 'top1_accuracy' and 'top-1 accuracy' are the same metric name."""
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
 _USED = ("ok", "scaled_down")
 
 
@@ -52,14 +58,16 @@ def verify_claim(claim: Claim, runs: Sequence[RunResult], *, metric_mismatch: st
     if metric_mismatch:
         return verdict("inconclusive", caveats=[*caveats, f"metric definition mismatch: {metric_mismatch}"])
 
-    used = [r for r in runs if r.status in _USED and claim.metric in r.metrics]
-    missing = [r for r in runs if r.status in _USED and claim.metric not in r.metrics]
+    key = _norm(claim.metric)
+    series = {r.run_id: {_norm(k): v for k, v in r.metrics.items()} for r in runs}
+    used = [r for r in runs if r.status in _USED and key in series[r.run_id]]
+    missing = [r for r in runs if r.status in _USED and key not in series[r.run_id]]
     if missing:
         caveats.append(f"{len(missing)} run(s) did not report metric '{claim.metric}'")
     if not used:
         return verdict("inconclusive", caveats=[*caveats, "no usable measurement"])
 
-    values = [r.metrics[claim.metric] for r in used]
+    values = [series[r.run_id][key] for r in used]
     n = len(values)
     mean = statistics.fmean(values)
     std = statistics.stdev(values) if n > 1 else None

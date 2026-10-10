@@ -14,8 +14,14 @@ from .container import AppContainer
 from .ingest.pdf import PdfError, ingest_pdf
 from .orchestration.gates import GateAlreadyResolved, GateError
 from .orchestration.models import PaperRecord, RunState
+from .orchestration.notebook_io import NotebookError, parse_notebook
 
 MAX_PDF_BYTES = 30 * 1024 * 1024
+
+
+class StartRun(BaseModel):
+    notebook: dict[str, Any] | None = None  # .ipynb JSON (or {"cells": [...]}) to execute as clean runs
+    seeds: list[int] | None = Field(default=None, min_length=1, max_length=20)
 
 
 class GateResponse(BaseModel):
@@ -76,10 +82,13 @@ def build_router(c: AppContainer) -> APIRouter:
         return {**p.model_dump(mode="json"), "runs": [_summary(s) for s in c.runs.list(paper_id)]}
 
     @r.post("/papers/{paper_id}/runs", status_code=202)
-    def start_run(paper_id: str, bg: BackgroundTasks) -> dict[str, str]:
+    def start_run(paper_id: str, bg: BackgroundTasks, body: StartRun | None = None) -> dict[str, str]:
         o = orch()
         try:
-            state = o.start(paper_id)
+            cells = parse_notebook(body.notebook) if body and body.notebook else None
+            state = o.start(paper_id, notebook=cells, seeds=body.seeds if body else None)
+        except NotebookError as e:
+            raise HTTPException(422, f"invalid notebook: {e}") from e
         except KeyError as e:
             raise HTTPException(404, "paper not found") from e
         bg.add_task(o.advance, state.run_id)
@@ -139,8 +148,11 @@ def build_router(c: AppContainer) -> APIRouter:
     @r.get("/papers/{paper_id}/claims")
     def claims(paper_id: str) -> list[dict[str, Any]]:
         s = latest_run(paper_id)
-        # verdicts need clean runs (P6+): until then every claim honestly reports `not_executed`
-        return [{"claim": cl.model_dump(mode="json"), "verdict": {"status": "not_executed", "caveats": ["no experiment was run"]}}
+        # a verdict exists only if clean runs were executed; otherwise every claim honestly reports `not_executed`
+        by_claim = {v.claim_id: v for v in s.verdicts}
+        return [{"claim": cl.model_dump(mode="json"),
+                 "verdict": by_claim[cl.id].model_dump(mode="json") if cl.id in by_claim
+                 else {"status": "not_executed", "caveats": ["no experiment was run"]}}
                 for cl in (s.parsed.claims if s.parsed else [])]
 
     @r.get("/papers/{paper_id}/audit")

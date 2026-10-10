@@ -9,13 +9,16 @@ Nodes after Route that need compute (Environment, Execute, Diagnose, Verify, Att
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 from crisisgrid_core.harness import EscalationRequired, HarnessConfig, HarnessGuard
-from crisisgrid_core.models import utcnow
+from crisisgrid_core.jobs import JobSpec
+from crisisgrid_core.models import RunResult, utcnow
 from crisisgrid_core.routing import select_route
+from crisisgrid_core.verifier import verify_claim
 
 from ..agents.artifact_finder import RepoFetcher, find_artifacts
 from ..agents.gap_auditor import GapAuditorAgent
@@ -24,6 +27,7 @@ from ..gateway.gateway import Gateway
 from ..gateway.types import AllProvidersFailed
 from ..ingest.embed import Embedder
 from ..ingest.pdf import IngestedPaper, PdfError, ingest_pdf
+from ..jobs.service import JobService
 from ..repos.interfaces import EventStore, PaperRepo, RunEvent, RunRepo
 from .gates import GateError, GateManager
 from .models import Gate, GateKind, RunState
@@ -54,16 +58,21 @@ class PipelineDeps:
     gates: GateManager
     events: EventStore
     guard_config: HarnessConfig = field(default_factory=HarnessConfig)
+    jobs: JobService | None = None  # None: no execution (Tier 1 only)
 
 
 class Orchestrator:
     def __init__(self, deps: PipelineDeps) -> None:
         self.d = deps
         self._guards: dict[str, HarnessGuard] = {}  # budgets are per process; a restart starts fresh budgets
+        self._locks: dict[str, threading.RLock] = {}
 
     # ---- plumbing ------------------------------------------------------------------------------------------
     def _guard(self, run_id: str) -> HarnessGuard:
         return self._guards.setdefault(run_id, HarnessGuard(self.d.guard_config))
+
+    def _lock(self, run_id: str) -> threading.RLock:
+        return self._locks.setdefault(run_id, threading.RLock())
 
     def _emit(self, run_id: str, kind: str, payload: dict[str, Any] | None = None) -> None:
         self.d.events.append(RunEvent(run_id=run_id, module="pipeline", kind=kind, payload=payload or {}))
@@ -81,15 +90,21 @@ class Orchestrator:
         return ingest_pdf(pdf)
 
     # ---- lifecycle -----------------------------------------------------------------------------------------
-    def start(self, paper_id: str) -> RunState:
+    def start(self, paper_id: str, *, notebook: list[dict[str, str]] | None = None, seeds: list[int] | None = None) -> RunState:
         if self.d.papers.get(paper_id) is None:
             raise KeyError(paper_id)
-        state = RunState(paper_id=paper_id)
+        state = RunState(paper_id=paper_id, notebook=notebook)
+        if seeds:
+            state.seeds = seeds
         self.d.runs.save(state)
         self._emit(state.run_id, "run_started", {"paper_id": paper_id})
         return state
 
     def advance(self, run_id: str) -> RunState:
+        with self._lock(run_id):  # two finishing jobs (or a job and a human) must not advance the same run twice
+            return self._advance(run_id)
+
+    def _advance(self, run_id: str) -> RunState:
         state = self._load(run_id)
         guard = self._guard(run_id)
         while state.status == "running":
@@ -162,7 +177,7 @@ class Orchestrator:
         a = gate.action
         if gate.kind == "data":
             state.data_resolution = {"upload": "upload", "substitute": "substitute", "stop_tier1": "stopped"}[a or ""]  # type: ignore[assignment]
-            state.node = "report" if a == "stop_tier1" else "reconstruct"
+            state.node = "report" if a == "stop_tier1" else self._after_gates(state)
         elif gate.kind == "gap":
             if a == "reject":
                 state.caveats.append("The user rejected the proposed gap list/assumptions; nothing was reconstructed.")
@@ -171,12 +186,14 @@ class Orchestrator:
                 state.assumptions_approved = True
                 if a == "edit" and payload.get("note"):
                     state.caveats.append(f"Assumptions edited by the user: {payload['note']}")
-                state.node = "reconstruct"
+                state.node = self._after_gates(state)
         elif gate.kind == "stuck":
             node = state.node
             if a == "retry_with_hint":
                 state.hints[node] = str(payload.get("hint", ""))
                 state.error = None
+                if node == "execute":
+                    state.job_ids = []  # a retry enqueues fresh jobs
             elif a == "skip_stage":
                 state.caveats.append(f"Stage '{node}' was skipped by the user after a failure ({state.error}); results are incomplete.")
                 state.error = None
@@ -221,7 +238,7 @@ class Orchestrator:
         assert state.parsed is not None and state.inventory is not None
         state.route = select_route(state.parsed.claims, state.gaps, state.inventory)
         self._emit(state.run_id, "route_selected", state.route.model_dump(mode="json"))
-        return {1: "data_gate", 3: "gap_gate", 2: "reconstruct"}[state.route.case]
+        return {1: "data_gate", 3: "gap_gate", 2: self._after_gates(state)}[state.route.case]
 
     def _node_data_gate(self, state: RunState, guard: HarnessGuard) -> Step:
         assert state.route is not None and state.inventory is not None
@@ -238,6 +255,82 @@ class Orchestrator:
             "gaps": [g.model_dump(mode="json") for g in state.gaps if g.severity in ("blocking", "major")],
             "assumptions": [],  # proposed by the Code rebuilder (Tier 3, not built yet)
         })
+
+    def _after_gates(self, state: RunState) -> str:
+        """Run something if we were given a notebook and have a queue; otherwise be honest that nothing executes."""
+        return "execute" if state.notebook and self.d.jobs is not None else "reconstruct"
+
+    def _node_execute(self, state: RunState, guard: HarnessGuard) -> Step:
+        """Clean runs (fresh process, fixed seed, top to bottom) on workers; one job per seed. Interactive runs never get here."""
+        jobs = self.d.jobs
+        assert jobs is not None and state.notebook
+        if not state.job_ids:
+            specs = [JobSpec(run_id=state.run_id, graph_id=f"paper:{state.paper_id}", mode="clean_notebook", seed=sd,
+                             notebook_version=1, payload={"cells": state.notebook}) for sd in state.seeds]
+            why = jobs.unschedulable_reasons(specs[0])
+            if why and why != ["no worker is registered"]:
+                # workers exist but none can run this job: waiting would never help, so a human decides
+                raise EscalationRequired("no worker can run this job: " + "; ".join(why))
+            state.job_ids = [jobs.enqueue(sp).id for sp in specs]
+            self._emit(state.run_id, "jobs_queued", {"job_ids": state.job_ids, "seeds": state.seeds})
+            if why:  # nobody registered yet: queue anyway, a worker may connect later (outbound-only workers poll)
+                self._emit(state.run_id, "awaiting_worker", {"detail": "no worker is registered yet; jobs stay queued"})
+            state.status = "waiting_jobs"
+            return "execute"
+        found = [jobs.repo.get_job(j) for j in state.job_ids]
+        done = [j for j in found if j is not None]
+        if len(done) != len(state.job_ids) or any(j.status in ("queued", "assigned", "running") for j in done):
+            state.status = "waiting_jobs"
+            return "execute"
+        status_map = {"succeeded": "ok", "failed": "failed", "timeout": "timeout", "infra_failed": "infra_failed"}
+        results: list[RunResult] = []
+        for j in done:
+            if j.status not in status_map:
+                continue  # cancelled
+            res = j.result or {}
+            results.append(RunResult(
+                run_id=j.id, graph_id=j.spec.graph_id, seed=j.spec.seed, status=status_map[j.status],  # type: ignore[arg-type]
+                mode="clean", verification_eligible=True, metrics=res.get("metrics", {}), log_ref=f"events:{state.run_id}:{j.id}",
+                lockfile_digest=res.get("lockfile_digest") or None, hardware_info=res.get("hardware_info", {}),
+                notebook_version=j.spec.notebook_version))
+            w = jobs.repo.get_worker(j.worker_id) if j.worker_id else None
+            if w is not None and w.capabilities.isolation != "docker":
+                msg = "Executed on a lower-isolation worker (no Docker): untrusted code ran in a restricted subprocess."
+                if msg not in state.caveats:
+                    state.caveats.append(msg)
+        state.run_results, state.execution = results, "clean_runs"
+        if not any(r.status in ("ok", "scaled_down") for r in results):
+            errs = "; ".join(sorted({j.error or j.status for j in done}))[:300]
+            raise EscalationRequired(f"no clean run produced a result ({errs})")
+        return "verify"
+
+    def _node_verify(self, state: RunState, guard: HarnessGuard) -> Step:
+        assert state.parsed is not None
+        mismatch = None
+        if state.data_resolution == "substitute":
+            mismatch = "substitute data was used: this is not a reproduction of the paper's setting"
+        if state.route and state.route.case == 3:
+            state.caveats.append("The executed notebook is not the authors' code (Tier 3): results are directional only.")
+        state.verdicts = [verify_claim(c, state.run_results, metric_mismatch=mismatch) for c in state.parsed.claims]
+        for v in state.verdicts:
+            self._emit(state.run_id, "verdict_ready", v.model_dump(mode="json"))
+        return "report"
+
+    def on_job_finished(self, run_id: str) -> None:
+        """Called when any job of a run ends (HTTP completion, reaper, cancel). Continues the run once ALL its jobs are done."""
+        with self._lock(run_id):
+            state = self.d.runs.get(run_id)
+            if state is None or state.status != "waiting_jobs":
+                return
+            jobs = self.d.jobs
+            assert jobs is not None
+            for i in state.job_ids:
+                j = jobs.repo.get_job(i)
+                if j is None or j.status in ("queued", "assigned", "running"):
+                    return
+            state.status = "running"
+            self.d.runs.save(state)
+            self._advance(run_id)
 
     def _node_reconstruct(self, state: RunState, guard: HarnessGuard) -> Step:
         msg = "Environment build, execution and claim verification are not available in this build; no experiment was run."

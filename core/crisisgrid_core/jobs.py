@@ -15,6 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from .ids import new_id
+from .models import as_utc
 
 __all__ = [
     "JobStatus", "JobMode", "Capabilities", "JobRequirements", "JobSpec", "TERMINAL", "can_transition", "match",
@@ -97,4 +98,4 @@ def failure_outcome(status: str, attempt: int, max_infra_retries: int) -> Litera
 
 
 def is_stale(last_heartbeat: datetime, now: datetime, timeout: timedelta) -> bool:
-    return now - last_heartbeat > timeout
+    return as_utc(now) - as_utc(last_heartbeat) > timeout
