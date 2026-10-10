@@ -215,3 +215,11 @@ def test_github_fetcher_unpinned_and_network_errors():
         raise httpx.ConnectError("down")
 
     assert GitHubFetcher(httpx.Client(transport=httpx.MockTransport(boom))).fetch("https://github.com/a/b") is None
+
+
+def test_a_dataset_the_parser_already_found_is_not_listed_twice_from_its_link():
+    from crisisgrid_core.papers import DatasetRef
+
+    parsed_ = ParsedPaper(datasets=[DatasetRef(name="CIFAR-10", url="https://huggingface.co/datasets/uoft-cs/cifar10", access="public")])
+    inv = find_artifacts("data: https://huggingface.co/datasets/uoft-cs/cifar10 and https://zenodo.org/records/9", parsed_, FakeFetcher())
+    assert sorted(d.name for d in inv.datasets) == ["9", "CIFAR-10"]

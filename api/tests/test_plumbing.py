@@ -34,5 +34,5 @@ def test_only_db_package_imports_sqlalchemy():
         for f in pkg.rglob("*.py")
         if not f.relative_to(pkg).as_posix().startswith("db/") and bad.search(f.read_text(encoding="utf-8"))
     ]
-    # main.py (health probe) and container.py (wiring takes an Engine) are the only non-db modules that touch SQLAlchemy types
-    assert offenders == ["container.py", "main.py"]
+    # container.py (wiring takes an Engine), demo.py (runs the migrations) and main.py (health probe) are the only exceptions
+    assert offenders == ["container.py", "demo.py", "main.py"]

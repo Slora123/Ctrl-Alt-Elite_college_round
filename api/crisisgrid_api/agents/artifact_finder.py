@@ -64,10 +64,13 @@ def find_artifacts(text: str, parsed: ParsedPaper, fetcher: RepoFetcher, *, pape
             break
 
     ds = {d.name.lower(): d.model_copy() for d in parsed.datasets}
+    known_urls = {(d.url or "").lower().rstrip("/") for d in ds.values() if d.url}  # the parser may already have found this dataset
     for url in links["hf_datasets"] + links["zenodo"]:
-        ds.setdefault(url.lower(), DatasetRef(name=url.rsplit("/", 1)[-1], url=url, access="public"))
+        if url.lower() not in known_urls:
+            ds.setdefault(url.lower(), DatasetRef(name=url.rsplit("/", 1)[-1], url=url, access="public"))
     for url in links["kaggle"]:
-        ds.setdefault(url.lower(), DatasetRef(name=url.rsplit("/", 1)[-1], url=url, access="gated"))  # kaggle needs an account/key
+        if url.lower() not in known_urls:
+            ds.setdefault(url.lower(), DatasetRef(name=url.rsplit("/", 1)[-1], url=url, access="gated"))  # kaggle needs an account/key
     inv.datasets = list(ds.values())
     inv.weights_urls = links["hf_models"] + links["weights"]
 

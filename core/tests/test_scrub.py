@@ -34,3 +34,12 @@ def test_bearer_and_private_keys():
 @pytest.mark.parametrize("clean", ["epoch 3 loss 0.123", "tokenizer loaded", "learning_rate = 0.1", "Traceback (most recent call last):"])
 def test_ordinary_text_is_untouched(clean):
     assert scrub(clean) == clean
+
+
+def test_find_credentials_only_reports_unmistakable_shapes():
+    from crisisgrid_core.scrub import find_credentials
+
+    assert find_credentials("token = 'hf_" + "a" * 30 + "'") != []
+    assert find_credentials("k = 'AKIAABCDEFGHIJKLMNOP'") != []
+    assert find_credentials("password = 'hunter2hunter2'") == []   # loose pattern: scrubbed in output, not grounds to reject code
+    assert find_credentials("learning_rate = 0.1  # tokenizer") == []

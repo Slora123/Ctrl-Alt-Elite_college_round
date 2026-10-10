@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from crisisgrid_core.scrub import find_credentials
+
 MAX_CELLS = 500
 MAX_CELL_CHARS = 200_000
 
@@ -34,6 +36,10 @@ def parse_notebook(obj: Any) -> list[dict[str, str]]:
         src = _source(c.get("source", ""))
         if len(src) > MAX_CELL_CHARS:
             raise NotebookError(f"cell {i} is too large")
+        leaked = find_credentials(src)
+        if leaked:  # never store, echo or forward a credential: refuse, and say where, without repeating it
+            raise NotebookError(f"cell {i} contains what looks like a credential ({leaked[0][:4]}..., {len(leaked[0])} chars): "
+                                "remove it from the notebook; secrets must not be stored in cells")
         cells.append({"kind": "markdown" if kind != "code" else "code", "source": src})
     if len(cells) > MAX_CELLS:
         raise NotebookError(f"too many cells (max {MAX_CELLS})")

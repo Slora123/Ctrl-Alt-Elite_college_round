@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-__all__ = ["scrub", "REDACTED"]
+__all__ = ["scrub", "find_credentials", "REDACTED"]
 
 REDACTED = "[REDACTED]"
 
@@ -31,3 +31,12 @@ def scrub(text: str, secrets: Iterable[str] = ()) -> str:
     for rx in _PATTERNS[:-1]:
         text = rx.sub(REDACTED, text)
     return _PATTERNS[-1].sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", text)
+
+
+def find_credentials(text: str) -> list[str]:
+    """Credential-shaped strings that are unmistakable (provider key formats, bearer tokens, private keys). Deliberately
+    excludes the loose `password = "..."` heuristic, which scrub() applies to output but which would reject too much code."""
+    found: list[str] = []
+    for rx in _PATTERNS[:-1]:
+        found += [m.group(0) for m in rx.finditer(text)]
+    return found

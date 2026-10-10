@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
@@ -17,6 +18,18 @@ from .routes_workers import build_worker_router
 log = logging.getLogger("crisisgrid.api")
 
 
+async def _reap_forever(container: AppContainer, interval: float) -> None:
+    """Jobs whose worker went silent are infrastructure failures: requeue once, then fail them (JobService.reap)."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            reaped = await asyncio.to_thread(container.jobs.reap)
+            if reaped:
+                log.warning("reaped jobs", extra={"count": len(reaped)})
+        except Exception:  # noqa: BLE001  (a failed sweep must never kill the API; the next one retries)
+            log.exception("reaper sweep failed")
+
+
 def create_app(settings: Settings | None = None, engine: Engine | None = None, container: AppContainer | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     configure_logging(settings.log_level)
@@ -26,7 +39,10 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, c
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("api starting", extra={"env": settings.env})
+        reaper = asyncio.create_task(_reap_forever(container, settings.reaper_interval_s)) if settings.reaper_interval_s > 0 else None
         yield
+        if reaper is not None:
+            reaper.cancel()
         engine.dispose()
 
     app = FastAPI(title="CrisisGrid API", version="0.1.0", lifespan=lifespan)

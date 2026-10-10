@@ -123,3 +123,43 @@ Contributions that improve research transparency, experiment traceability, repro
 ## License
 
 A license has not yet been specified. Add a suitable license before distributing the project publicly.
+
+
+## Backend (Python)
+
+The reproducibility engine lives beside the website. It follows `implementation_plan.md`, `architecture.md` and `system_design.md`.
+
+| Directory | What it is |
+|---|---|
+| `core/` | Pure logic, no I/O: shared models, experiment graph service, **claim verifier**, harness guard (loop/budget/repair firewall), audit rules R01-R16, route selector, job state machine, **action hook**, change attribution, report checks, secret scrubber |
+| `api/` | FastAPI app, model gateway (provider chain, cache, audit log), Tier 1 agents (parser, artifact finder, gap auditor), persisted pipeline with human gates, SSE stream, job queue, outbound-only workers, repair loop, offline demo |
+| `paper_env/` | Colab-style notebook + isolated Python env + datasets module (Linux/macOS only; not yet connected to `api/`) |
+| `docs/decisions.md` | Every deviation, assumption and known gap, numbered. Read this before relying on anything |
+
+### Try it without any keys or network
+
+```bash
+cd api
+python -m venv .venv && .venv/bin/pip install -e ../core -e . pytest   # Windows: .venv\Scripts\...
+python -m crisisgrid_api.demo     # paper PDF -> audit -> 3 clean runs on a real worker -> verdict -> report
+python -m pytest                  # api tests;  cd ../core && python -m pytest  for the core tests
+```
+
+### Run it
+
+```bash
+docker compose up --build         # Postgres+pgvector, Redis, MinIO, API (see docs/decisions.md D-11: compose is untested)
+CG_LLM_CHAIN="groq/qwen/qwen3-32b" CG_LLM_API_KEY=... uvicorn crisisgrid_api.main:app   # without CG_LLM_CHAIN, reading works but runs are refused
+python -m crisisgrid_api.worker --api http://localhost:8000 --name my-laptop            # a worker connects OUT to the API
+```
+
+### What is and is not real
+
+Real and tested: the verifier, graph hashing, audit rules, quote verification (no hallucinated hyperparameters survive), gates that
+survive a restart, the job queue with infrastructure-only retries, clean-run execution, secret scrubbing, the repair loop with
+diff-based risk classification, number-checked report narratives.
+
+Not done or not verified (details in `docs/decisions.md`): any real LLM call (the LiteLLM adapter has never run against a provider),
+Docker/Postgres (tests use SQLite), Docker sandboxing (workers are restricted subprocesses with **no network/filesystem limits**),
+user authentication, the Graph/Env/Code-rebuilder agents, graph persistence and Version Comparison endpoints, PDF export, the
+notebook UI, and `paper_env` integration.
