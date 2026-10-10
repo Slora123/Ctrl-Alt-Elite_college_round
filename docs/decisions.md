@@ -12,5 +12,8 @@
 
 - **D-02 Reconcile Paper Environment models.** `core.models` implements system_design 1.1 as written. `paper_env/paper_env/domain/models.py` already has local versions with extra fields (e.g. `Run`, `CellRun.blocked_action_id`, `Checkpoint.cell_versions`) and different shapes. They are not merged yet; decide in P5/P6 which is canonical and whether `paper_env` imports from `core`.
 - **D-07 Attribution, Audit rules, Harness guard firewall test.** Not in P1. The firewall test lands with the first agent (P3).
-- **D-08 Postgres/Alembic/UUIDv7 in repos.** `uuid7()` exists in `core/ids.py`; `paper_env` still uses `uuid4` hex IDs and SQLite. Moves with P0.
-- **D-09 P0 not done.** No Docker Compose, CI, or monorepo `api/`, `orchestration/`, etc. yet.
+- **D-08 `paper_env` persistence.** `paper_env` still uses `uuid4` hex IDs and SQLite; moving it to `uuid7` and the shared Postgres is deferred to the P5/P6 reconciliation (see D-02).
+- **D-09 Rest of the monorepo skeleton.** P0 added `api/` (plumbing + FastAPI health) next to `core/` and `paper_env/`. `orchestration/`, `agents/`, `gateway/`, `worker/` are created in the phase that first needs them (P3, P4, P6) rather than as empty directories.
+- **D-10 CI covers `core` and `api` only.** `paper_env` tests need `uv`, a jupyter kernel and network, and are not run in CI yet.
+- **D-11 Docker Compose is untested.** `docker-compose.yml`, `api/Dockerfile` and the Postgres/pgvector branch of migration 0001 were written without Docker or Postgres available. Migration and health logic are tested on SQLite only. First thing to do when Docker is available: `docker compose up --build` and `curl localhost:8000/health` (expect `{"status":"ok","db":"ok","migration":"0001"}`).
+- **D-12 Redis and MinIO are in Compose but unused** until P4 (streams/SSE) and P5/P6 (outputs, artifacts).
