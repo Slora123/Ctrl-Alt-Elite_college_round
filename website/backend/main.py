@@ -13,12 +13,13 @@ app=FastAPI(title="CrisisGrid API")
 @app.get("/api/health")
 def health():return {"ok":True,"ai_provider":ai.PROVIDER}
 def db():
-    c=sqlite3.connect(BASE/"crisisgrid.db");c.row_factory=sqlite3.Row;return c
-with db() as c:
+    c=sqlite3.connect(BASE/"crisisgrid.db")
+    c.row_factory=sqlite3.Row
     c.executescript("""create table if not exists papers(id integer primary key,filename text,stored text,title text,size integer,pages integer,text text,analysis text,created text);
 create table if not exists items(id integer primary key,kind text,paper_id integer,data text,created text);
 create table if not exists history(id integer primary key,ts text,type text,detail text,paper_id integer);
 create table if not exists kv(k text primary key,v text);""")
+    return c
 now=lambda:time.strftime("%Y-%m-%d %H:%M:%S")
 def log(c,t,d,pid=None):c.execute("insert into history(ts,type,detail,paper_id) values(?,?,?,?)",(now(),t,d,pid))
 def bad(m,code=422):raise HTTPException(code,m)
