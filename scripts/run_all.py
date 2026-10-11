@@ -4,7 +4,7 @@
     python scripts/run_all.py [--no-auth] [--worker] [--terminal] [--llm-chain "groq/qwen/qwen3-32b" --llm-key ...]
 
   website (React, Vite)         http://localhost:5173      <- open this
-  website API (Node, mock AI)   http://127.0.0.1:8000
+  website API (Node, legacy)    http://127.0.0.1:8000      (no page calls it any more)
   CrisisGrid API (FastAPI)      http://127.0.0.1:8100      (pipeline, auth, and the notebook environment under /paper-env)
 
 First run installs dependencies (uv + npm) and builds the notebook UI. Everything shares ONE auth secret, generated once
