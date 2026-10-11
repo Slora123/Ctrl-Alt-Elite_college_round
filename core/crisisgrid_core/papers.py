@@ -49,6 +49,8 @@ class Contradiction(BaseModel):
 class ParsedPaper(BaseModel):
     title: str = ""
     published: date | None = None
+    summary: str = ""  # plain-language overview written by the model: NOT quote-verified, shown as such
+    method: str = ""  # how the approach works, same status as the summary
     claims: list[Claim] = Field(default_factory=list)
     hyperparameters: dict[str, ExtractedValue] = Field(default_factory=dict)  # keys: learning_rate, batch_size, ...
     datasets: list[DatasetRef] = Field(default_factory=list)
@@ -67,6 +69,9 @@ class ParsedPaper(BaseModel):
         if not isinstance(d, dict):
             return d
         d = dict(d)
+        for k in ("summary", "method"):  # prose is never worth failing the extraction for: coerce and cap it
+            v = d.get(k)
+            d[k] = "" if not isinstance(v, str) else v.strip()[:1500]
         hp = d.get("hyperparameters")
         if isinstance(hp, dict):
             d["hyperparameters"] = {k: v for k, v in hp.items() if not (v is None or (isinstance(v, dict) and v.get("value") is None))}

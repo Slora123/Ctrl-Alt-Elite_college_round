@@ -451,6 +451,16 @@ export function Understand({ctx}) {
                 </p>
               </div>
             </div>
+            {d.overview ? (
+              <div style={{marginTop: 14}}>
+                <div className="lab" style={{marginBottom: 4}}>Summary{' '}
+                  {d.overview.source === 'curated'
+                    ? <Tag c="na" title="Written by the team for this demo paper; not produced by the analysis">curated</Tag>
+                    : <Tag c="wa" title="Written by the model from the paper; unlike the claims below it has no verified quotes">model-written, not quote-verified</Tag>}</div>
+                <p style={{fontSize: 14, lineHeight: 1.6, margin: 0}}>{d.overview.summary}</p>
+                {d.overview.method && <><div className="lab" style={{margin: '12px 0 4px'}}>Method</div><p style={{fontSize: 14, lineHeight: 1.6, margin: 0}}>{d.overview.method}</p></>}
+              </div>
+            ) : parsed && <p style={{fontSize: 12.5, color: 'var(--t2)', margin: '12px 0 0'}}>No summary for this analysis (it ran before summaries existed). Use “Re-run analysis” to generate one.</p>}
             {d.paper.needs_ocr && <div className="err" style={{marginTop: 12}}>This PDF has no extractable text (scanned?). It cannot be analysed without OCR.</div>}
             {!d.llm_configured && !parsed && <p style={{fontSize: 13, color: 'var(--t2)', marginBottom: 0}}>The paper cannot be parsed without an LLM. The extracted text is shown below.</p>}
             {d.run?.route && <p style={{fontSize: 13, margin: '12px 0 0'}}>Route: <b>case {d.run.route.case}, Tier {d.run.route.tier}</b> — {(d.run.route.reasons || []).join('; ')}</p>}

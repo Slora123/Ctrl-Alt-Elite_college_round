@@ -19,6 +19,9 @@ Rules:
 - hyperparameter keys: learning_rate, batch_size, epochs, optimizer, weight_decay, momentum, ... (snake_case).
 - For each claim: metric, dataset, split, reported_value, unit, a tolerance (use the paper's std if given, else 0.5 for percent,
   0.005 for fractions), and the exact sentence as source.quote.
+- summary: 4 to 6 plain sentences for a non-expert: the problem, the idea, how it was tested, the main result. method: 3 to 5
+  sentences on how the approach works (architecture, training procedure). Both are your own words and need no quote; state only
+  what the paper says. Keep each under 1200 characters.
 - If two places in the paper disagree, record a contradiction with BOTH spans; do not pick one."""
 
 QUERIES = [

@@ -16,6 +16,7 @@ from crisisgrid_core.models import utcnow
 
 from .auth.models import User
 from .container import AppContainer
+from .curated import curated_for
 from .db.graph_repo import SqlGraphRepo
 from .graphs import build_graph_router
 from .ingest.pdf import PdfError, ingest_pdf
@@ -170,6 +171,9 @@ def build_router(c: AppContainer) -> APIRouter:
         ing = stored_text(paper_id)
         return {"paper": {**p.model_dump(mode="json"), "pages": ing.n_pages, "chars": len(ing.text), "needs_ocr": ing.needs_ocr},
                 "run": _summary(s) if s else None, "parsed": s.parsed.model_dump(mode="json") if s and s.parsed else None,
+                # curated text for the demo papers wins; otherwise the model's own summary, labelled as such
+                "overview": curated_for(p.filename, _paper_title(p, runs), s.parsed.title if s and s.parsed else None)
+                or ({"summary": s.parsed.summary, "method": s.parsed.method, "source": "model"} if s and s.parsed and s.parsed.summary else None),
                 "llm_configured": c.orchestrator is not None}
 
     @r.get("/papers/{paper_id}/artifacts")
