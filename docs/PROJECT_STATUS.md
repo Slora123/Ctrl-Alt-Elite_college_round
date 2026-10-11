@@ -121,6 +121,12 @@ scrubbing, offline demo: ✅ (with their stated caveats, e.g. rules R01–R11 ar
   compare two versions (structural diff, invalidated nodes, code diff, attribution when both have >= 2 clean runs). Smoke test:
   `api/tests/test_graph_api.py`.
 
+- 🟡 **Colab execution** (`worker/colab_executor.py`, `run_all.py --colab [--colab-gpu T4]`): jobs run on a Google Colab VM (GPU/TPU/CPU)
+  through the official `colab` CLI; one VM per worker, kernel restarted per seed, output streamed to the run log, GPU name shown in
+  the run tables, reports say the code ran on a remote VM. Needs a one-time human Google login (`colab --auth=oauth2 sessions`).
+  Covered by an integration test against a stand-in CLI (`api/tests/test_colab_executor.py`); **not yet run against real Colab**.
+  Quota/tier decides whether a GPU is granted; the run fails as infrastructure (never as evidence) if it is not.
+
 Still open: Env builder agent; LLM-written graph (the builder is rule-based); PDF report export; cost caps / AWS budgets; Colab bootstrap and desktop app; golden-paper recorded demo.
 
 ### 3.4 Website

@@ -956,12 +956,13 @@ function RunsTable({runs}) {
   if (!runs?.length) return <div style={{fontSize: 13, color: 'var(--t2)'}}>No runs of this version yet.</div>
   return (
     <div className="reg-card"><table>
-      <thead><tr className="lab"><th>Run</th><th>Status</th><th>Clean runs</th><th>Metrics (mean)</th></tr></thead>
+      <thead><tr className="lab"><th>Run</th><th>Status</th><th>Clean runs</th><th>Ran on</th><th>Metrics (mean)</th></tr></thead>
       <tbody>{runs.map(r => (
         <tr key={r.run_id}>
           <td className="m">{r.run_id.slice(-8)}</td>
           <td><RunTag run={r}/>{r.status === 'waiting_gate' && <> <Link className="lk" to="/pipeline">answer gate</Link></>}</td>
           <td className="m">{r.n_ok}</td>
+          <td className="m">{r.ran_on || '—'}</td>
           <td className="m">{Object.entries(r.metrics).map(([k, v]) => <div key={k}>{k}: {num(v)}</div>)}{!Object.keys(r.metrics).length && '—'}</td>
         </tr>))}</tbody>
     </table></div>

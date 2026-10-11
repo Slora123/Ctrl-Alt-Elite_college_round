@@ -135,6 +135,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--no-auth", action="store_true", help="run without logins (single-user local use)")
     ap.add_argument("--no-worker", action="store_true", help="do not start the local worker that runs experiment jobs")
+    ap.add_argument("--colab", action="store_true", help="run experiment jobs on a Google Colab VM (GPU) through the colab CLI instead of "
+                    "this machine; log in once first: colab --auth=oauth2 sessions")
+    ap.add_argument("--colab-gpu", default="T4", help="with --colab: T4, L4, G4, H100, A100 or none (CPU)")
     ap.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)  # kept for old commands: the worker now starts by default
     ap.add_argument("--no-generate", action="store_true", help="do not let the pipeline write experiment notebooks itself")
     ap.add_argument("--terminal", action="store_true", help="enable the notebook terminal (a real unsandboxed shell!)")
@@ -154,6 +157,18 @@ def main() -> None:
                  "\n  A previous run is probably still running. Stop it (Ctrl-C in its terminal, or: pkill -f run_all.py; "
                  "pkill -f vite; pkill -f server.js; pkill -f crisisgrid_api), or pick other ports with --api-port/--node-port/--web-port.")
     py = ensure_python()
+    if a.colab and not a.no_worker:  # one clear message now beats a worker that dies quietly in a log file
+        colab_bin = shutil.which("colab") or str(Path.home() / ".local/bin/colab")
+        if not Path(colab_bin).exists():
+            sys.exit("[run_all] --colab needs the Colab CLI: uv tool install google-colab-cli   (Linux/macOS only)")
+        try:
+            r = subprocess.run([colab_bin, "--auth=oauth2", "sessions"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+            ok = r.returncode == 0 and "authorize colab-cli" not in r.stdout + r.stderr
+        except subprocess.TimeoutExpired:
+            ok = False
+        if not ok:
+            sys.exit("[run_all] The Colab CLI is not logged in. Run this once in a terminal, open the URL it prints, paste the code back:\n"
+                     "    colab --auth=oauth2 sessions\nthen start run_all again.")
     ensure_node()
     logs = STATE / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -209,7 +224,8 @@ def main() -> None:
 
     if not a.no_worker:  # dev: registration is open, so the worker registers itself (its token is printed in .cg/logs/worker.log)
         spawn("worker", [str(py), "-m", "crisisgrid_api.worker", "--api", f"http://127.0.0.1:{API_PORT}", "--name", "local-worker",
-                         "--executor", "paper_env", "--paper-env-dir", str(STATE / "worker_paper_env")], ROOT / "api")
+                         *(["--executor", "colab", "--colab-gpu", a.colab_gpu, "--paper-env-dir", str(STATE / "colab_worker")] if a.colab else
+                           ["--executor", "paper_env", "--paper-env-dir", str(STATE / "worker_paper_env")])], ROOT / "api")
 
     print(f"""
 [run_all] CrisisGrid is running.

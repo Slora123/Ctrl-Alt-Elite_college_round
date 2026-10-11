@@ -47,7 +47,7 @@ class Capabilities(BaseModel):
     gpu: bool = False
     network: bool = True
     max_runtime_s: int = 3600
-    isolation: Literal["docker", "subprocess"] = "subprocess"  # 'subprocess' = lower isolation (no Docker)
+    isolation: Literal["docker", "subprocess", "remote_vm"] = "subprocess"  # 'subprocess' = lower isolation (no Docker); 'remote_vm' = rented cloud VM (Colab)
     python_versions: list[str] = Field(default_factory=lambda: ["3.12"])
     cost_per_hr: float = 0.0
 

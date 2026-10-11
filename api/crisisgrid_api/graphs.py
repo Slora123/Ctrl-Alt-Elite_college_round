@@ -156,7 +156,9 @@ def build_graph_router(c: Any, repo: SqlGraphRepo, paper_for: Any, orch: Any) ->
             for x in ok:
                 for k, val in x.metrics.items():
                     means.setdefault(k, []).append(val)
-            runs.append({"run_id": rid, "status": s.status, "node": s.node, "n_ok": len(ok),
+            hw = next((x.hardware_info for x in ok if x.hardware_info), {})
+            ran_on = hw.get("gpu") or (f"CPU ({hw.get('platform', '').split('-')[0]})" if hw else None)
+            runs.append({"run_id": rid, "status": s.status, "node": s.node, "n_ok": len(ok), "ran_on": ran_on,
                          "metrics": {k: sum(vs) / len(vs) for k, vs in means.items()},
                          "verdicts": [x.model_dump(mode="json") for x in s.verdicts]})
         return out, runs

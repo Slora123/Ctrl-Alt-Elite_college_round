@@ -368,7 +368,12 @@ class Orchestrator:
                 lockfile_digest=res.get("lockfile_digest") or None, hardware_info=res.get("hardware_info", {}),
                 notebook_version=j.spec.notebook_version))
             w = jobs.repo.get_worker(j.worker_id) if j.worker_id else None
-            if w is not None and w.capabilities.isolation != "docker":
+            if w is not None and w.capabilities.isolation == "remote_vm":
+                msg = ("Executed on a remote cloud VM (Google Colab): the notebook code and its results left this machine; "
+                       "the VM is Google's, not a sandbox we control.")
+                if msg not in state.caveats:
+                    state.caveats.append(msg)
+            elif w is not None and w.capabilities.isolation != "docker":
                 msg = "Executed on a lower-isolation worker (no Docker): untrusted code ran in a restricted subprocess."
                 if msg not in state.caveats:
                     state.caveats.append(msg)

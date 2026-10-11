@@ -52,13 +52,33 @@ def lockfile_digest() -> str:
         return ""
 
 
+def gpu_info() -> dict:
+    """GPU name/memory when one is visible (Colab GPU runtimes); empty on CPU-only machines."""
+    try:
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            p = torch.cuda.get_device_properties(0)
+            return {"gpu": p.name, "gpu_memory_gb": round(p.total_memory / 2**30, 1), "cuda": torch.version.cuda}
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
 def main(spec_path: str, result_path: str) -> int:
     spec = json.load(open(spec_path, encoding="utf-8"))
+    result = run_spec(spec)
+    with open(result_path, "w", encoding="utf-8") as f:
+        json.dump(result, f)
+    return 0
+
+
+def run_spec(spec: dict) -> dict:
     seed = int(spec.get("seed", 0))
     metrics: dict[str, float] = {}
     result: dict = {"status": "ok", "metrics": metrics, "error": None, "seeded": seed_everything(seed), "cells_run": 0,
                     "hardware_info": {"python": platform.python_version(), "platform": platform.platform(),
-                                      "cpu_count": os.cpu_count()},
+                                      "cpu_count": os.cpu_count(), **gpu_info()},
                     "lockfile_digest": lockfile_digest(), "seed": seed}
 
     def report_metric(name: str, value) -> None:
@@ -84,9 +104,7 @@ def main(spec_path: str, result_path: str) -> int:
                                                   "traceback": tb[-4000:]})
             break
     result["duration_s"] = round(time.time() - started, 3)
-    with open(result_path, "w", encoding="utf-8") as f:
-        json.dump(result, f)
-    return 0
+    return result
 
 
 if __name__ == "__main__":
