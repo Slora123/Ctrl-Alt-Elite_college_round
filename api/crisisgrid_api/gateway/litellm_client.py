@@ -8,6 +8,12 @@ from .types import LLMResponse, Message, ProviderError
 class LiteLLMClient:
     def __init__(self, api_key: str | None = None, api_base: str | None = None, timeout: float = 60.0) -> None:
         self._api_key, self._api_base, self._timeout = api_key, api_base, timeout
+        # Import once here (app startup, main thread): importing lazily inside complete() let several pipeline threads race
+        # on litellm's first import and deadlock (_DeadlockError). Tolerate a missing package so the app still starts.
+        try:
+            import litellm  # noqa: F401
+        except ImportError:
+            pass
 
     def complete(self, model: str, messages: list[Message], *, temperature: float, max_tokens: int) -> LLMResponse:
         import litellm  # lazy: optional dependency
