@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .ids import new_id
 
@@ -28,6 +28,16 @@ class Source(BaseModel):
     kind: Literal["paper", "repo", "readme", "human"]
     ref: str
     quote: str | None = Field(default=None, max_length=200)
+
+    @field_validator("quote", mode="before")
+    @classmethod
+    def _shorten(cls, v: object) -> object:
+        """Models often copy a whole sentence. A prefix of a real quote is still a real quote (it is checked against the paper
+        text afterwards), so cut it at a word boundary instead of rejecting an otherwise good answer."""
+        if isinstance(v, str) and len(v) > 200:
+            cut = v[:200]
+            return (cut.rsplit(" ", 1)[0] if " " in cut[120:] else cut).rstrip()
+        return v
 
 
 class Claim(BaseModel):

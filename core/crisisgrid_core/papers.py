@@ -7,7 +7,7 @@ import unicodedata
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .models import Claim, Provenance, Source
 
@@ -59,6 +59,21 @@ class ParsedPaper(BaseModel):
     hardware: ExtractedValue | None = None
     contradictions: list[Contradiction] = Field(default_factory=list)
     dropped: list[str] = Field(default_factory=list)  # items removed because their quote could not be verified
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_nulls(cls, d: object) -> object:
+        """`null` means "the paper does not say": omit it instead of failing the whole extraction (and never invent a value)."""
+        if not isinstance(d, dict):
+            return d
+        d = dict(d)
+        hp = d.get("hyperparameters")
+        if isinstance(hp, dict):
+            d["hyperparameters"] = {k: v for k, v in hp.items() if not (v is None or (isinstance(v, dict) and v.get("value") is None))}
+        for k in ("seeds", "hardware"):
+            if isinstance(d.get(k), dict) and d[k].get("value") is None:
+                d[k] = None
+        return d
 
 
 class RepoInfo(BaseModel):
