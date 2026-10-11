@@ -182,7 +182,11 @@ export function Pipeline(){
   },[sel,refresh])
   useEffect(()=>()=>esRef.current?.close(),[])
 
+  const [sp]=useSearchParams()
+  const wanted=sp.get('paper')
   const choose=safe(async id=>{setSel(id);setEvents([]);await refresh(id);const d=await cg('/papers/'+id);const last=d.runs[d.runs.length-1];if(last&&!['completed','failed'].includes(last.status))follow(last.run_id)})
+
+  useEffect(()=>{if(wanted&&wanted!==sel&&papers.some(x=>x.id===wanted))choose(wanted)},[wanted,papers]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const upload=safe(async e=>{
     const f=e.target.files[0];if(!f)return
@@ -271,7 +275,7 @@ export function Pipeline(){
             {gaps.length>0&&<div className="card-panel" style={{marginBottom:16}}>
               <div className="lab">Audit findings ({gaps.length})</div>
               <table><thead><tr><th>Rule</th><th>Severity</th><th>Finding</th></tr></thead><tbody>
-                {gaps.map((g,i)=><tr key={i}><td>{g.rule||g.kind||'—'}</td><td><Tag c={g.severity==='blocking'||g.severity==='major'?'no':g.severity==='minor'?'wa':'na'}>{g.severity}</Tag></td><td>{g.description||g.summary||g.title}</td></tr>)}
+                {gaps.map((g,i)=><tr key={i}><td>{g.field||g.rule||'—'}</td><td><Tag c={g.severity==='blocking'||g.severity==='major'?'no':g.severity==='minor'?'wa':'na'}>{g.severity}</Tag></td><td>{g.description||g.summary||g.title}</td></tr>)}
               </tbody></table></div>}
 
             {events.length>0&&<div className="card-panel" style={{marginBottom:16}}>
