@@ -16,6 +16,7 @@ class Settings:
     llm_api_key: str = ""  # applied to EVERY model in the chain; for mixed providers leave it empty and use each provider's own env var
     llm_api_base: str = ""
     # no notebook attached -> generate one from the paper (reviewed at a gate before it runs). Off by default for the test suites.
+    repair: bool = field(default_factory=lambda: os.environ.get("CG_REPAIR", "1") in ("1", "true", "yes"))  # diagnose + fix failed runs
     generate_notebooks: bool = field(default_factory=lambda: os.environ.get("CG_GENERATE_NOTEBOOKS", "0") in ("1", "true", "yes"))
     llm_max_tokens: int = 4096  # per-call output budget for the long-output agents (parser, generator); reasoning models need more  # e.g. a self-hosted NVIDIA NIM / vLLM / Ollama endpoint (OpenAI-compatible, usually ends in /v1)
     github_token: str = ""
@@ -49,6 +50,7 @@ class Settings:
             llm_api_key=e.get("CG_LLM_API_KEY", d.llm_api_key),
             llm_api_base=e.get("CG_LLM_API_BASE", d.llm_api_base),
             generate_notebooks=e.get("CG_GENERATE_NOTEBOOKS", "0") in ("1", "true", "yes"),
+            repair=e.get("CG_REPAIR", "1") in ("1", "true", "yes"),
             llm_max_tokens=int(e.get("CG_LLM_MAX_TOKENS", d.llm_max_tokens)),
             github_token=e.get("CG_GITHUB_TOKEN", d.github_token),
             reaper_interval_s=float(e.get("CG_REAPER_INTERVAL_S", d.reaper_interval_s)),

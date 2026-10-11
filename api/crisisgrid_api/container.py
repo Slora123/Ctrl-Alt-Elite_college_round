@@ -64,7 +64,7 @@ def build_container(engine: Engine, settings: Settings, *, gateway: Gateway | No
         orch = Orchestrator(PipelineDeps(
             gateway=gateway, embedder=embedder or HashEmbedder(), fetcher=fetcher or GitHubFetcher(token=settings.github_token or None),
             papers=papers, runs=runs, gates=gates, events=events, jobs=jobs,
-            generate_notebooks=settings.generate_notebooks))
+            generate_notebooks=settings.generate_notebooks, repair=settings.repair))
         jobs.on_finished = lambda job: orch.on_job_finished(job.run_id)  # reaper / cancel path
     auth = AuthService(SqlAuthRepo(factory), settings, resolve_secret(settings) if settings.auth_enabled else "auth-disabled-placeholder")
     return AppContainer(papers=papers, runs=runs, gate_repo=gate_repo, events=events, gates=gates, orchestrator=orch, jobs=jobs,

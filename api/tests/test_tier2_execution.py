@@ -85,6 +85,7 @@ def test_the_job_payload_the_worker_receives_has_no_claim_target(db):
 
 def test_a_failing_notebook_is_not_retried_and_hands_the_decision_to_a_human(db):
     s = Stack(db, parsed(PUBLIC), NO_GAPS)
+    s.container.orchestrator.d.repair = False  # this test is about the no-repair path (CG_REPAIR=0)
     pid = s.upload()
     w = make_worker(s)
     run_id = start(s, pid, BAD_CELL, seeds=[0])

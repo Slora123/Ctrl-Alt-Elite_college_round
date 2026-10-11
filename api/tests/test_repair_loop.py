@@ -165,8 +165,9 @@ def test_a_hostile_traceback_is_quoted_data_and_cannot_close_its_own_block(db):
     assert s.gate(run_id)["kind"] == "stuck" and s.container.runs.get(run_id).edits == []
 
 
-def test_repair_is_off_by_default_and_a_failure_goes_straight_to_a_human(db):
+def test_with_repair_switched_off_a_failure_goes_straight_to_a_human(db):
     s = Stack(db, parsed(PUBLIC), NO_GAPS)
+    s.container.orchestrator.d.repair = False  # CG_REPAIR=0
     run_id = start(s, s.upload(), ZERO_DIV, seeds=[0])
     drain(make_worker(s))
     g = s.gate(run_id)
