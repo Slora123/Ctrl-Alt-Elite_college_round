@@ -14,7 +14,10 @@ class Settings:
     s3_bucket: str = "crisisgrid"
     llm_chain: str = ""  # comma-separated LiteLLM model ids, tried in order, e.g. "groq/qwen/qwen3-32b,ollama/qwen2.5:7b"
     llm_api_key: str = ""  # applied to EVERY model in the chain; for mixed providers leave it empty and use each provider's own env var
-    llm_api_base: str = ""  # e.g. a self-hosted NVIDIA NIM / vLLM / Ollama endpoint (OpenAI-compatible, usually ends in /v1)
+    llm_api_base: str = ""
+    # no notebook attached -> generate one from the paper (reviewed at a gate before it runs). Off by default for the test suites.
+    generate_notebooks: bool = field(default_factory=lambda: os.environ.get("CG_GENERATE_NOTEBOOKS", "0") in ("1", "true", "yes"))
+    llm_max_tokens: int = 4096  # per-call output budget for the long-output agents (parser, generator); reasoning models need more  # e.g. a self-hosted NVIDIA NIM / vLLM / Ollama endpoint (OpenAI-compatible, usually ends in /v1)
     github_token: str = ""
     reaper_interval_s: float = 30.0  # how often to reap jobs whose worker stopped heartbeating; 0 disables
     worker_registration_token: str = ""  # if empty, registration is only open when CG_ENV=dev
@@ -45,6 +48,8 @@ class Settings:
             llm_chain=e.get("CG_LLM_CHAIN", d.llm_chain),
             llm_api_key=e.get("CG_LLM_API_KEY", d.llm_api_key),
             llm_api_base=e.get("CG_LLM_API_BASE", d.llm_api_base),
+            generate_notebooks=e.get("CG_GENERATE_NOTEBOOKS", "0") in ("1", "true", "yes"),
+            llm_max_tokens=int(e.get("CG_LLM_MAX_TOKENS", d.llm_max_tokens)),
             github_token=e.get("CG_GITHUB_TOKEN", d.github_token),
             reaper_interval_s=float(e.get("CG_REAPER_INTERVAL_S", d.reaper_interval_s)),
             worker_registration_token=e.get("CG_WORKER_REGISTRATION_TOKEN", d.worker_registration_token),

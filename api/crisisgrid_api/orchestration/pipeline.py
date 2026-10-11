@@ -13,7 +13,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
+from typing import Any, Callable
 
 from crisisgrid_core.action_hook import Action, ActionHook
 from crisisgrid_core.harness import EscalationRequired, HarnessConfig, HarnessGuard
@@ -25,6 +25,7 @@ from crisisgrid_core.verifier import verify_claim
 from ..agents.artifact_finder import RepoFetcher, find_artifacts
 from ..agents.gap_auditor import GapAuditorAgent
 from ..agents.paper_parser import PaperParserAgent
+from ..agents.notebook_gen import NotebookGeneratorAgent
 from ..agents.report_writer import ReportWriterAgent
 from ..agents.run_diagnoser import RunDiagnoserAgent
 from ..gateway.gateway import Gateway
@@ -49,7 +50,7 @@ class GateRequest:
 Step = str | GateRequest
 
 # where "skip this stage" leads when a human skips a stuck stage
-SKIP_NEXT = {"ingest": "report", "understand": "report", "audit": "report", "route": "report"}
+SKIP_NEXT = {"ingest": "report", "understand": "report", "audit": "report", "route": "report", "generate": "reconstruct"}
 
 
 @dataclass
@@ -65,6 +66,11 @@ class PipelineDeps:
     jobs: JobService | None = None  # None: no execution (Tier 1 only)
     narrative: bool = False  # ask the Report writer for a short summary (one extra model call)
     repair: bool = False  # diagnose failed clean runs and propose fixes; off: a failed run goes straight to a human
+    generate_notebooks: bool = False  # no notebook attached: let the generator write one (shown at a 'notebook' gate first)
+    # bridge to the Paper Environment (set by the app when paper_env is mounted): put generated cells into an editable
+    # notebook, and read the (possibly edited) cells back when the human approves
+    notebook_sink: Callable[[str, list[dict[str, str]], list[str]], str | None] | None = None
+    notebook_source: Callable[[str], list[dict[str, str]] | None] | None = None
 
 
 class Orchestrator:
@@ -170,6 +176,10 @@ class Orchestrator:
             raise GateError("edit_code is only available during execution stages (not built yet)")
         if gate.kind == "action" and action == "edit" and not (isinstance(payload.get("source"), str) and payload["source"].strip()):
             raise GateError("answer 'edit' needs payload.source: the replacement source of the cell")  # validated BEFORE resolving
+        if gate.kind == "notebook" and action == "edit":
+            cells = payload.get("cells")
+            if not (isinstance(cells, list) and cells and all(isinstance(c, dict) and isinstance(c.get("source"), str) for c in cells)):
+                raise GateError("answer 'edit' needs payload.cells: a non-empty list of {\"source\": str}")
         resolved = self.d.gates.respond(gate_id, action, payload)
         self._apply(state, resolved, payload)
         state.waiting_gate_id = None
@@ -206,6 +216,19 @@ class Orchestrator:
                 state.node = SKIP_NEXT.get(node, "report")
             elif a == "abort":
                 self._fail(state, "aborted by the user")
+        elif gate.kind == "notebook":
+            if a == "reject":
+                state.caveats.append("The generated notebook was rejected by the reviewer; no experiment was run.")
+                state.notebook, state.node = None, "report"
+            else:
+                if a == "edit":
+                    state.notebook = [{"kind": "code", "source": str(c["source"])} for c in payload["cells"]]
+                elif state.notebook_env_id and self.d.notebook_source is not None:
+                    # run exactly what the reviewer sees in the Notebook page (they may have edited it there)
+                    current = self.d.notebook_source(state.notebook_env_id)
+                    if current:
+                        state.notebook = current
+                state.job_ids, state.node = [], "execute"
         elif gate.kind == "action":
             pending = state.pending_edit
             if pending is None:
@@ -276,8 +299,36 @@ class Orchestrator:
         })
 
     def _after_gates(self, state: RunState) -> str:
-        """Run something if we were given a notebook and have a queue; otherwise be honest that nothing executes."""
-        return "execute" if state.notebook and self.d.jobs is not None else "reconstruct"
+        """Run the notebook we were given; otherwise write one (if enabled) for a human to review; otherwise be honest that
+        nothing executes."""
+        if state.notebook and self.d.jobs is not None:
+            return "execute"
+        if self.d.generate_notebooks and self.d.jobs is not None and state.parsed is not None:
+            return "generate"
+        return "reconstruct"
+
+    def _node_generate(self, state: RunState, guard: HarnessGuard) -> Step:
+        """Write a runnable (usually scaled-down) notebook from the extracted setup. It never runs before a human approves it."""
+        assert state.parsed is not None
+        nb, notes = NotebookGeneratorAgent(self.d.gateway, guard).generate(
+            state.parsed, state.gaps, run_id=state.run_id, hint=state.hints.get("generate"))
+        state.notebook = [{"kind": "code", "source": c.source} for c in nb.cells]
+        state.generated, state.requirements, state.scaled_down = True, nb.requirements, nb.scaled_down
+        state.assumptions = [*nb.assumptions, *([nb.dataset_note] if nb.dataset_note else []), *notes]
+        state.job_ids = []
+        if self.d.notebook_sink is not None:
+            try:
+                state.notebook_env_id = self.d.notebook_sink(state.paper_id, state.notebook, state.requirements)
+            except Exception as e:  # noqa: BLE001  (the review still works from the gate; only the editable copy is missing)
+                log.warning("could not copy the generated notebook into a paper environment: %s", e)
+        self._emit(state.run_id, "notebook_generated", {"cells": len(state.notebook), "requirements": state.requirements,
+                                                         "scaled_down": state.scaled_down, "env_id": state.notebook_env_id})
+        return GateRequest("notebook", {
+            "cells": [{"purpose": c.purpose, "source": c.source} for c in nb.cells],
+            "requirements": state.requirements, "assumptions": state.assumptions, "scaled_down": state.scaled_down,
+            "env_id": state.notebook_env_id,
+            "note": "Written by the system from the paper's stated setup, not the authors' code. Results will be directional only.",
+        })
 
     def _node_execute(self, state: RunState, guard: HarnessGuard) -> Step:
         """Clean runs (fresh process, fixed seed, top to bottom) on workers; one job per seed. Interactive runs never get here."""
@@ -285,7 +336,7 @@ class Orchestrator:
         assert jobs is not None and state.notebook
         if not state.job_ids:
             specs = [JobSpec(run_id=state.run_id, graph_id=f"paper:{state.paper_id}", mode="clean_notebook", seed=sd,
-                             notebook_version=1, payload={"cells": state.notebook}) for sd in state.seeds]
+                             notebook_version=1, payload={"cells": state.notebook, "requirements": state.requirements}) for sd in state.seeds]
             why = jobs.unschedulable_reasons(specs[0])
             if why and why != ["no worker is registered"]:
                 # workers exist but none can run this job: waiting would never help, so a human decides
@@ -307,8 +358,12 @@ class Orchestrator:
             if j.status not in status_map:
                 continue  # cancelled
             res = j.result or {}
+            st = status_map[j.status]
+            if st == "ok" and state.scaled_down:
+                st = "scaled_down"  # the verifier caps scaled-down evidence at 'partial'
             results.append(RunResult(
-                run_id=j.id, graph_id=j.spec.graph_id, seed=j.spec.seed, status=status_map[j.status],  # type: ignore[arg-type]
+                run_id=j.id, graph_id=j.spec.graph_id, seed=j.spec.seed, status=st,  # type: ignore[arg-type]
+                scale_note="; ".join(state.assumptions)[:500] if st == "scaled_down" else None,
                 mode="clean", verification_eligible=True, metrics=res.get("metrics", {}), log_ref=f"events:{state.run_id}:{j.id}",
                 lockfile_digest=res.get("lockfile_digest") or None, hardware_info=res.get("hardware_info", {}),
                 notebook_version=j.spec.notebook_version))
@@ -330,8 +385,11 @@ class Orchestrator:
         mismatch = None
         if state.data_resolution == "substitute":
             mismatch = "substitute data was used: this is not a reproduction of the paper's setting"
-        if state.route and state.route.case == 3:
-            state.caveats.append("The executed notebook is not the authors' code (Tier 3): results are directional only.")
+        if (state.route and state.route.case == 3) or state.generated:
+            msg = ("The executed notebook was written by the system, not the authors: results are directional only."
+                   if state.generated else "The executed notebook is not the authors' code (Tier 3): results are directional only.")
+            if msg not in state.caveats:
+                state.caveats.append(msg)
         agent_edits = [e for e in state.edits if e.author == "agent"]
         if agent_edits:
             state.caveats.append(f"{len(agent_edits)} agent-authored edit(s) were applied to get the notebook to run; see the deviations.")

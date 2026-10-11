@@ -16,6 +16,8 @@ from crisisgrid_core.models import utcnow
 
 from .auth.models import User
 from .container import AppContainer
+from .db.graph_repo import SqlGraphRepo
+from .graphs import build_graph_router
 from .ingest.pdf import PdfError, ingest_pdf
 from .orchestration.gates import GateAlreadyResolved, GateError
 from .orchestration.models import PaperRecord, RunState
@@ -37,7 +39,8 @@ class GateResponse(BaseModel):
 def _summary(s: RunState) -> dict[str, Any]:
     return {"run_id": s.run_id, "paper_id": s.paper_id, "status": s.status, "node": s.node, "waiting_gate_id": s.waiting_gate_id,
             "error": s.error, "route": s.route.model_dump(mode="json") if s.route else None, "needs_ocr": s.needs_ocr,
-            "caveats": s.caveats}
+            "caveats": s.caveats, "generated": s.generated, "notebook_env_id": s.notebook_env_id, "assumptions": s.assumptions,
+            "requirements": s.requirements, "scaled_down": s.scaled_down}
 
 
 def _paper_title(paper: PaperRecord, runs: list[RunState]) -> str:
@@ -139,6 +142,7 @@ def build_router(c: AppContainer) -> APIRouter:
         if c.audit_log is not None:
             c.audit_log.delete_runs(ids)
         c.runs.delete_for_paper(paper_id)
+        SqlGraphRepo(c.session_factory).delete_for_paper(paper_id)
         c.papers.delete(paper_id)
         return Response(status_code=204)
 
@@ -302,6 +306,8 @@ def build_router(c: AppContainer) -> APIRouter:
             raise HTTPException(422, str(e)) from e
         bg.add_task(o.advance, state.run_id)
         return {"run_id": state.run_id, "resumed": True}
+
+    r.include_router(build_graph_router(c, SqlGraphRepo(c.session_factory), paper_for, orch))
 
     # ---- results -------------------------------------------------------------------------------------------
     @r.get("/papers/{paper_id}/claims")

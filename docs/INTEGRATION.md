@@ -51,7 +51,7 @@ creates a single `.venv` with all three installed editable; `crisisgrid-api` dep
 * **Every dashboard page now talks to the FastAPI** (`/cg`): Papers, Paper Understanding, Artifacts, Claims, Audit, Reports, History,
   Mission Control, Settings, plus Pipeline/Notebook/Account. The mock AI engine (`ai_mock.js`, `/api/ai/*`) was deleted. The Node API
   still exists with its old papers/items/graph routes, but nothing in the website calls it (browser E2E asserts zero `/api` requests);
-  it can be retired. Experiment Lab, Graph and Version Comparison have no backend yet and say so instead of showing demo data.
+  it can be retired. Experiment Lab, Graph and Version Comparison read `/papers/{id}/graph*` (graph versions in the `graph_versions` table).
 * `paper_env` needs POSIX (`fcntl`, `pty`); on Windows `/paper-env` is simply not mounted (the rest works).
 * Domain models are still separate (`core` vs `paper_env.domain`, uuid7 vs uuid4); reconciliation (their D-02/D-08) is open.
 * Not production-ready: no sandbox, no HTTPS/CSRF hardening beyond bearer tokens, no email flows (password reset), no

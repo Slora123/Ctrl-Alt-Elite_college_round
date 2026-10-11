@@ -81,11 +81,12 @@ def ensure_node() -> None:
 def load_env_file() -> dict[str, str]:
     """KEY=VALUE lines from <state>/env (git-ignored, keep it chmod 600): provider keys such as AWS_BEARER_TOKEN_BEDROCK or
     CG_LLM_API_KEY go here instead of the command line, so they never end up in shell history or process listings."""
-    f = STATE / "env"
     out: dict[str, str] = {}
-    if f.exists():
+    for f in (ROOT / ".env", STATE / "env"):  # repo-root .env (git-ignored) first, then the state dir; later wins
+        if not f.exists():
+            continue
         for line in f.read_text().splitlines():
-            line = line.strip()
+            line = line.strip().removeprefix("export ").strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
                 out[k.strip()] = v.strip().strip('"').strip("'")
@@ -133,9 +134,11 @@ def main() -> None:
     global STATE, API_PORT, NODE_PORT, WEB_PORT
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--no-auth", action="store_true", help="run without logins (single-user local use)")
-    ap.add_argument("--worker", action="store_true", help="also start a worker that runs jobs in paper_env kernels")
+    ap.add_argument("--no-worker", action="store_true", help="do not start the local worker that runs experiment jobs")
+    ap.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)  # kept for old commands: the worker now starts by default
+    ap.add_argument("--no-generate", action="store_true", help="do not let the pipeline write experiment notebooks itself")
     ap.add_argument("--terminal", action="store_true", help="enable the notebook terminal (a real unsandboxed shell!)")
-    ap.add_argument("--llm-chain", default="", help="comma-separated LiteLLM model ids, e.g. groq/qwen/qwen3-32b")
+    ap.add_argument("--llm-chain", default="", help="comma-separated LiteLLM model ids (or CG_LLM_CHAIN in .env), e.g. nvidia_nim/meta/llama-3.3-70b-instruct")
     ap.add_argument("--llm-key", default="", help="API key for the LLM provider")
     ap.add_argument("--state-dir", default="", help="where databases, environments and logs live (default: .cg)")
     ap.add_argument("--api-port", type=int, default=API_PORT)
@@ -155,16 +158,20 @@ def main() -> None:
     logs = STATE / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     secret = auth_secret()
+    file_env = {**os.environ, **load_env_file()}  # .env / .cg/env may set CG_LLM_CHAIN etc.; command-line flags win
+    a.llm_chain = a.llm_chain or file_env.get("CG_LLM_CHAIN", "")
+    a.llm_key = a.llm_key or file_env.get("CG_LLM_API_KEY", "")
     base = {
         "CG_ENV": "dev", "CG_AUTH_SECRET": secret, "CG_AUTH_ENABLED": "0" if a.no_auth else "1",
         "CG_DATABASE_URL": f"sqlite:///{(STATE / 'crisisgrid.db').as_posix()}", "CG_DATA_DIR": str(STATE),
         "CG_PAPER_ENV_DIR": str(STATE / "paper_env"), "CG_PAPER_ENV_TERMINAL": "1" if a.terminal else "0",
-        "CG_LLM_CHAIN": a.llm_chain, "CG_LLM_API_KEY": a.llm_key, "CG_LLM_API_BASE": os.environ.get("CG_LLM_API_BASE", ""), "CG_AUTH_URL": f"http://127.0.0.1:{API_PORT}",
+        "CG_GENERATE_NOTEBOOKS": "0" if a.no_generate else file_env.get("CG_GENERATE_NOTEBOOKS", "1"),
+        "CG_LLM_CHAIN": a.llm_chain, "CG_LLM_API_KEY": a.llm_key, "CG_LLM_API_BASE": file_env.get("CG_LLM_API_BASE", ""), "CG_AUTH_URL": f"http://127.0.0.1:{API_PORT}",
         "PAPER_ENV_ENABLE_TERMINAL": "1" if a.terminal else "0",
         # the website's Vite proxy and the Node backend find their neighbours through these
         "CG_API": f"http://127.0.0.1:{API_PORT}", "CG_NODE_API": f"http://127.0.0.1:{NODE_PORT}",
     }
-    env = {**os.environ, **load_env_file(), **base}
+    env = {**file_env, **base}
     procs: list[subprocess.Popen] = []
 
     def spawn(name: str, cmd: list[str], cwd: Path, extra: dict | None = None) -> subprocess.Popen:
@@ -200,7 +207,7 @@ def main() -> None:
               ROOT / "website")
     wait(f"http://localhost:{WEB_PORT}/", "website", p, logs / "website.log")
 
-    if a.worker:  # dev: registration is open, so the worker registers itself (its token is printed in .cg/logs/worker.log)
+    if not a.no_worker:  # dev: registration is open, so the worker registers itself (its token is printed in .cg/logs/worker.log)
         spawn("worker", [str(py), "-m", "crisisgrid_api.worker", "--api", f"http://127.0.0.1:{API_PORT}", "--name", "local-worker",
                          "--executor", "paper_env", "--paper-env-dir", str(STATE / "worker_paper_env")], ROOT / "api")
 

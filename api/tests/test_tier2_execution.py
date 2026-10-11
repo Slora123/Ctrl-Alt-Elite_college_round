@@ -80,7 +80,7 @@ def test_the_job_payload_the_worker_receives_has_no_claim_target(db):
     s = Stack(db, parsed(PUBLIC), NO_GAPS)
     run_id = start(s, s.upload(), GOOD, seeds=[5])
     spec = s.container.jobs.repo.list_jobs(run_id=run_id)[0].spec
-    assert set(spec.payload) == {"cells"} and "91.25" not in str(spec.payload) and spec.seed == 5
+    assert set(spec.payload) == {"cells", "requirements"} and "91.25" not in str(spec.payload) and spec.seed == 5
 
 
 def test_a_failing_notebook_is_not_retried_and_hands_the_decision_to_a_human(db):

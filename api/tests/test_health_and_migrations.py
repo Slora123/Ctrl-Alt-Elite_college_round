@@ -25,7 +25,7 @@ def test_health_reports_applied_migration(migrated_url):
         r = c.get("/health")
     assert r.status_code == 200
     body = r.json()
-    assert (body["status"], body["db"], body["migration"]) == ("ok", "ok", "0006")
+    assert (body["status"], body["db"], body["migration"]) == ("ok", "ok", "0007")
     assert body["paper_env"] is False  # the suite runs without mounting the notebook environment
 
 

@@ -1,6 +1,8 @@
 """Composition root: wires repositories, gateway and the orchestrator. The only place that knows every concrete class."""
 from __future__ import annotations
 
+from typing import Any
+
 from dataclasses import dataclass
 
 from sqlalchemy import Engine
@@ -15,7 +17,7 @@ from .db.event_store import SqlEventStore
 from .db.job_repo import SqlJobRepo
 from .db.llm_audit import SqlAuditLog
 from .db.pipeline_repos import SqlGateRepo, SqlPaperRepo, SqlRunRepo
-from .gateway.gateway import Gateway, Provider
+from .gateway.gateway import AgentProfile, Gateway, Provider
 from .gateway.litellm_client import LiteLLMClient
 from .ingest.embed import Embedder, HashEmbedder
 from .jobs.service import JobService
@@ -36,6 +38,7 @@ class AppContainer:
     auth: AuthService
     auth_deps: AuthDeps
     audit_log: SqlAuditLog | None = None  # the model-call log; erased per paper on delete
+    session_factory: Any = None
 
 
 def gateway_from_settings(settings: Settings, audit: SqlAuditLog) -> Gateway | None:
@@ -43,7 +46,9 @@ def gateway_from_settings(settings: Settings, audit: SqlAuditLog) -> Gateway | N
     if not models:
         return None
     client = LiteLLMClient(api_key=settings.llm_api_key or None, api_base=settings.llm_api_base or None)
-    return Gateway([Provider(name=m, model=m, client=client) for m in models], audit=audit)
+    long_out = AgentProfile(max_tokens=settings.llm_max_tokens)  # whole-paper extraction and code writing need room
+    return Gateway([Provider(name=m, model=m, client=client) for m in models], audit=audit,
+                   profiles={"paper_parser": long_out, "notebook_gen": AgentProfile(max_tokens=max(settings.llm_max_tokens, 6144))})
 
 
 def build_container(engine: Engine, settings: Settings, *, gateway: Gateway | None = None, embedder: Embedder | None = None,
@@ -58,8 +63,10 @@ def build_container(engine: Engine, settings: Settings, *, gateway: Gateway | No
     if gateway is not None:
         orch = Orchestrator(PipelineDeps(
             gateway=gateway, embedder=embedder or HashEmbedder(), fetcher=fetcher or GitHubFetcher(token=settings.github_token or None),
-            papers=papers, runs=runs, gates=gates, events=events, jobs=jobs))
+            papers=papers, runs=runs, gates=gates, events=events, jobs=jobs,
+            generate_notebooks=settings.generate_notebooks))
         jobs.on_finished = lambda job: orch.on_job_finished(job.run_id)  # reaper / cancel path
     auth = AuthService(SqlAuthRepo(factory), settings, resolve_secret(settings) if settings.auth_enabled else "auth-disabled-placeholder")
     return AppContainer(papers=papers, runs=runs, gate_repo=gate_repo, events=events, gates=gates, orchestrator=orch, jobs=jobs,
-                        auth=auth, auth_deps=build_deps(auth, settings), audit_log=audit_log)
+                        auth=auth, auth_deps=build_deps(auth, settings), audit_log=audit_log,
+                        session_factory=factory)

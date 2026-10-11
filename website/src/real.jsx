@@ -134,10 +134,12 @@ const GATE_INFO = {
   stuck: ['The analysis is stuck', 'A step failed or kept failing. Add a hint and retry, skip the step, or abort the run.'],
   final: ['Final review', 'The analysis is finished. Accept it, ask for a re-run, or add caveats to the report.'],
   action: ['Approve a code change', 'An agent proposes editing a notebook cell to make it run. Nothing is changed until you decide.'],
+  notebook: ['Review the generated experiment', 'The system wrote this notebook from the paper’s stated setup (not the authors’ code). Read it, edit it in the Notebook page if you want, then approve to run it on a worker. Results will be labelled directional.'],
 }
 const ACTION_LABEL = {
   upload: 'Continue (I provide the data)', substitute: 'Use substitute data (not a reproduction)', stop_tier1: 'Stop here (audit only)',
   approve_all: 'Approve', approve: 'Approve', reject: 'Reject', edit: 'Edit', retry_with_hint: 'Retry', skip_stage: 'Skip this step',
+  'notebook:approve': 'Approve and run on a worker', 'notebook:reject': 'Reject (no experiment)',
   abort: 'Abort the run', accept: 'Accept', request_rerun: 'Re-run the analysis', edit_caveats: 'Add caveats to the report',
 }
 // answers that need something typed: [payload field, placeholder, rows]
@@ -189,9 +191,18 @@ function GatePanel({run, onAnswered}) {
             {c.diff && <pre className="txt" style={{maxHeight: 220}}>{c.diff}</pre>}
             {c.reason == null && c.risk_class && <p style={{fontSize: 12.5, color: 'var(--t2)'}}>Risk class: {c.risk_class}</p>}
             {gate.kind === 'final' && c.caveats?.length > 0 && <ul className="clean-list">{c.caveats.map(x => <li key={x}>{x}</li>)}</ul>}
+            {gate.kind === 'notebook' && <>
+              {c.env_id && <p style={{fontSize: 13}}><a className="btn g" href={`#/notebook?env=${c.env_id}`}>Open / edit in the Notebook page ↗</a> <span style={{color: 'var(--t2)'}}>approve runs what is there at that moment</span></p>}
+              {c.scaled_down && <p style={{fontSize: 13}}><Tag c="wa">scaled down</Tag> the run is smaller than the paper’s; verdicts are capped at “partial”.</p>}
+              {c.assumptions?.length > 0 && <><b style={{fontSize: 13}}>Assumptions</b><ul className="clean-list">{c.assumptions.map(x => <li key={x}>{x}</li>)}</ul></>}
+              {c.requirements?.length > 0 && <p style={{fontSize: 13}}>Packages: <code>{c.requirements.join(', ')}</code></p>}
+              {(c.cells || []).map((cell, i) => <div key={i} style={{margin: '8px 0'}}>
+                <div style={{fontSize: 12, color: 'var(--t2)'}}>cell {i + 1}{cell.purpose ? ` · ${cell.purpose}` : ''}</div>
+                <pre className="txt" style={{maxHeight: 260}}>{cell.source}</pre></div>)}
+            </>}
             {writer ? (
               <div style={{display: 'flex', flexDirection: 'column', gap: 8}}>
-                {gate.allowed_actions.map(a => {
+                {gate.allowed_actions.filter(a => !(gate.kind === 'notebook' && a === 'edit')).map(a => {  /* notebooks are edited in the Notebook page */
                   const need = NEEDS[`${gate.kind}:${a}`] || NEEDS[a]
                   const key = gate.id + a
                   return (
@@ -199,7 +210,7 @@ function GatePanel({run, onAnswered}) {
                       {need && <textarea className="frm-input" rows={need[2]} placeholder={need[1]} style={{flex: '1 1 320px', fontFamily: need[0] === 'source' ? 'monospace' : 'inherit', fontSize: 12.5}}
                         value={text[key] ?? (need[0] === 'source' ? c.proposed_source ?? '' : '')} onChange={e => setText({...text, [key]: e.target.value})}/>}
                       <button className={a === 'abort' || a === 'reject' ? 'btn-sm-danger' : 'btn g'} disabled={!!busy} onClick={() => answer(gate, a)}>
-                        {busy === key ? 'Sending…' : ACTION_LABEL[a] || a}</button>
+                        {busy === key ? 'Sending…' : ACTION_LABEL[`${gate.kind}:${a}`] || ACTION_LABEL[a] || a}</button>
                     </div>)
                 })}
               </div>
@@ -838,30 +849,323 @@ export function Settings({ctx}) {
   )
 }
 
-// ------------------------------------------------------------------------------------------------ not built yet
-function NotYet({title, sub, what, needs}) {
+// ------------------------------------------------------------------------------------------------ experiment graphs
+const COLS = ['dataset', 'preprocess', 'model', 'train', 'eval', 'claim']
+const TYPE_COLOR = {dataset: '#3b82f6', preprocess: '#8b5cf6', model: '#ec4899', train: '#f59e0b', eval: '#10b981', claim: '#64748b'}
+const short = (s, n = 22) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s || '')
+const jsonText = v => JSON.stringify(v ?? {}, null, 2)
+
+function useGraph(ctx, version) {
+  const run = ctx.papers.find(p => p.id === ctx.pid)?.latest_run
+  return useCg(ctx.pid ? `/papers/${ctx.pid}/graph?${version ? 'version=' + version + '&' : ''}at=${runKey(ctx)}` : null,
+    {every: d => ((d?.current?.runs || []).some(r => ACTIVE.includes(r.status) || r.status === 'waiting_gate') || isActive(run) ? 3000 : 0)})
+}
+
+function NoGraph({g}) {
+  if (g.err) return <Err e={g.err}/>
+  if (g.loading && !g.data) return <Loading what="graph"/>
+  if (g.data && !g.data.current)
+    return <Empty t={<>No graph yet. It is built from the paper's extracted setup: start an analysis in <Link className="lk" to="/understand">Paper Understanding</Link> and come back once the paper is understood.</>}/>
+  return null
+}
+
+function VersionPick({versions, value, onChange, label = 'Version'}) {
+  return (
+    <label style={{display: 'inline-flex', gap: 8, alignItems: 'center', fontSize: 13}}>
+      <span className="lab">{label}</span>
+      <select className="picker-select" style={{minWidth: 220}} value={value || ''} onChange={e => onChange(+e.target.value)}>
+        {versions.map(v => <option key={v.version} value={v.version}>v{v.version} · {v.created_by}{v.change_note ? ' · ' + short(v.change_note, 40) : ''}</option>)}
+      </select>
+    </label>
+  )
+}
+
+/** Layered SVG view: one column per node type, edges from inputs. */
+function GraphView({graph, cells, selected, onSelect, highlight = {}}) {
+  const W = 170, H = 46, GX = 60, GY = 22
+  const cols = COLS.map(t => graph.nodes.filter(n => n.type === t))
+  const pos = {}
+  cols.forEach((ns, ci) => ns.forEach((n, ri) => { pos[n.id] = {x: 20 + ci * (W + GX), y: 20 + ri * (H + GY)} }))
+  const width = 40 + COLS.length * W + (COLS.length - 1) * GX
+  const height = 40 + Math.max(1, ...cols.map(c => c.length)) * (H + GY)
+  const bound = new Set((cells || []).map(c => c.node_id).filter(Boolean))
+  return (
+    <div style={{overflowX: 'auto', border: '1px solid var(--line, #e5e7eb)', borderRadius: 10, background: 'var(--bg2, transparent)'}}>
+      <svg width={width} height={height} style={{display: 'block'}}>
+        {graph.nodes.flatMap(n => n.inputs.filter(i => pos[i]).map(i => {
+          const a = pos[i], b = pos[n.id]
+          return <path key={i + '>' + n.id} d={`M${a.x + W},${a.y + H / 2} C${a.x + W + GX / 2},${a.y + H / 2} ${b.x - GX / 2},${b.y + H / 2} ${b.x},${b.y + H / 2}`}
+            fill="none" stroke="#94a3b8" strokeWidth="1.4"/>
+        }))}
+        {graph.nodes.map(n => {
+          const p = pos[n.id], on = selected === n.id, hl = highlight[n.id]
+          const label = n.type === 'claim' ? `${n.spec.metric} = ${n.spec.reported_value}` : n.type === 'dataset' ? n.spec.name : n.id
+          return (
+            <g key={n.id} transform={`translate(${p.x},${p.y})`} onClick={() => onSelect && onSelect(n.id)} style={{cursor: 'pointer'}}>
+              <rect width={W} height={H} rx="8" fill={hl ? (hl === 'modified' ? '#fef3c7' : hl === 'added' ? '#dcfce7' : '#fee2e2') : 'var(--card, #fff)'}
+                stroke={on ? '#111827' : TYPE_COLOR[n.type]} strokeWidth={on ? 2.5 : 1.5} strokeDasharray={n.provenance === 'inferred' ? '5 3' : undefined}/>
+              <rect width="5" height={H} rx="2" fill={TYPE_COLOR[n.type]}/>
+              <text x="13" y="18" fontSize="10.5" fill="#64748b">{n.type}{bound.has(n.id) ? ' · code' : ''}</text>
+              <text x="13" y="34" fontSize="12.5" fontWeight="600" fill="currentColor">{short(String(label), 21)}</text>
+              <title>{n.id} ({n.provenance})</title>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+function NodeDetail({node, cells}) {
+  if (!node) return <div style={{color: 'var(--t2)', fontSize: 13}}>Click a node to see its settings, where they come from in the paper, and the code that implements it.</div>
+  const code = (cells || []).filter(c => c.node_id === node.id)
+  return (
+    <div>
+      <div style={{display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8}}>
+        <b>{node.id}</b><Tag c="na">{node.type}</Tag><Tag c={PROV_TAG[node.provenance] || 'na'}>{node.provenance}</Tag>
+      </div>
+      <div className="lab">Settings</div>
+      <pre className="code" style={{whiteSpace: 'pre-wrap', fontSize: 12, maxHeight: 220, overflow: 'auto'}}>{jsonText(node.spec)}</pre>
+      {node.sources?.length > 0 && <><div className="lab">From the paper</div>{node.sources.map((s, i) => <Quote key={i} src={s}/>)}</>}
+      <div className="lab" style={{marginTop: 8}}>Code ({code.length} cell{code.length === 1 ? '' : 's'})</div>
+      {code.length ? code.map((c, i) => <pre key={i} className="code" style={{whiteSpace: 'pre-wrap', fontSize: 12, maxHeight: 260, overflow: 'auto'}}>{c.source}</pre>)
+        : <div style={{fontSize: 12.5, color: 'var(--t2)'}}>No notebook cell is bound to this node{node.type === 'claim' ? ' (claims are checked by the verifier)' : ''}.</div>}
+      <div style={{fontSize: 11, color: 'var(--t2)', marginTop: 6}} className="m">hash {node.content_hash?.slice(0, 16)}</div>
+    </div>
+  )
+}
+
+function RunsTable({runs}) {
+  if (!runs?.length) return <div style={{fontSize: 13, color: 'var(--t2)'}}>No runs of this version yet.</div>
+  return (
+    <div className="reg-card"><table>
+      <thead><tr className="lab"><th>Run</th><th>Status</th><th>Clean runs</th><th>Metrics (mean)</th></tr></thead>
+      <tbody>{runs.map(r => (
+        <tr key={r.run_id}>
+          <td className="m">{r.run_id.slice(-8)}</td>
+          <td><RunTag run={r}/>{r.status === 'waiting_gate' && <> <Link className="lk" to="/pipeline">answer gate</Link></>}</td>
+          <td className="m">{r.n_ok}</td>
+          <td className="m">{Object.entries(r.metrics).map(([k, v]) => <div key={k}>{k}: {num(v)}</div>)}{!Object.keys(r.metrics).length && '—'}</td>
+        </tr>))}</tbody>
+    </table></div>
+  )
+}
+
+export function Graph({ctx}) {
+  const [ver, setVer] = useState(null)
+  const [sel, setSel] = useState(null)
+  const g = useGraph(ctx, ver)
+  const cur = g.data?.current
   return (
     <>
-      <div className="page-header"><h2>{title}</h2><p className="sub">{sub}</p></div>
-      <div className="card-panel" style={{maxWidth: 760}}>
-        <Tag c="na">not available yet</Tag>
-        <p style={{fontSize: 14, lineHeight: 1.6}}>{what}</p>
-        <div className="lab" style={{marginBottom: 6}}>What it needs on the backend</div>
-        <ul className="clean-list">{needs.map(n => <li key={n}>{n}</li>)}</ul>
-        <p style={{fontSize: 13, color: 'var(--t2)', marginBottom: 0}}>
-          This page used to show demo data from a mock engine. It was removed rather than mixed with real results.
-          You can already run real experiments from <Link className="lk" to="/pipeline">Pipeline</Link> and <Link className="lk" to="/notebook">Notebook</Link>.
-        </p>
+      <div className="page-header">
+        <h2>Experiment Graph</h2>
+        <p className="sub">The paper as a graph of data, preprocessing, model, training, evaluation and claims. Solid border: stated in the paper (with the quote). Dashed: inferred. Built without a model, from the extracted setup; notebook cells are bound to the step they implement.</p>
       </div>
+      <Pick ctx={ctx}/>
+      <NoGraph g={g}/>
+      {cur && (
+        <>
+          <div style={{display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14}}>
+            <VersionPick versions={g.data.versions} value={cur.version} onChange={v => { setVer(v); setSel(null) }}/>
+            <span style={{fontSize: 12.5, color: 'var(--t2)'}}>{cur.graph.nodes.length} nodes · {cur.cells.length} cells · by {cur.created_by}{cur.parent_version ? ` from v${cur.parent_version}` : ''}</span>
+            <Link className="lk" to={'/lab?v=' + cur.version}>Edit in Experiment Lab →</Link>
+          </div>
+          <GraphView graph={cur.graph} cells={cur.cells} selected={sel} onSelect={setSel}/>
+          <div style={{display: 'flex', gap: 12, flexWrap: 'wrap', margin: '10px 0 18px', fontSize: 12}}>
+            {COLS.map(t => <span key={t}><i style={{display: 'inline-block', width: 10, height: 10, background: TYPE_COLOR[t], borderRadius: 2, marginRight: 4}}/>{t}</span>)}
+          </div>
+          <div className="card-panel" style={{marginBottom: 18}}><NodeDetail node={cur.graph.nodes.find(n => n.id === sel)} cells={cur.cells}/></div>
+          {cur.cells.some(c => !c.node_id) && <div style={{fontSize: 12.5, color: 'var(--t2)', marginBottom: 12}}>{cur.cells.filter(c => !c.node_id).length} setup cell(s) (imports, seeding) are not bound to a node.</div>}
+          <div className="lab" style={{marginBottom: 6}}>Runs of this version</div>
+          <RunsTable runs={cur.runs}/>
+        </>
+      )}
     </>
   )
 }
-export const Lab = () => <NotYet title="Experiment Lab" sub="Reconstruct and edit an experiment, then run it."
-  what="Building an editable experiment from a paper needs the Graph builder, which converts the paper into a graph of dataset, model, training and evaluation steps with a notebook cell per step."
-  needs={['Graph builder agent', 'Persisted experiment graph versions', 'Run an edited version and keep its results']}/>
-export const Graph = () => <NotYet title="Experiment Graph" sub="The paper as a graph of data, model, training and evaluation."
-  what="The graph service (hashing, versioning, diff) exists, but nothing builds a graph from a paper or stores versions yet."
-  needs={['Graph builder agent', 'Graph persistence and GET /papers/{id}/graph']}/>
-export const Versions = () => <NotYet title="Version Comparison" sub="Which edit caused a different result."
-  what="Change attribution is implemented and tested (noise floor, one-at-a-time contributions, residual, confound flags) but is not connected to stored runs."
-  needs={['Persisted graph versions', 'Run results per version', 'POST /graphs/compare wired to the attribution module']}/>
+
+export function Lab({ctx}) {
+  const qv = +(new URLSearchParams(window.location.hash.split('?')[1] || '').get('v')) || null
+  const [ver, setVer] = useState(qv)
+  const g = useGraph(ctx, ver)
+  const cur = g.data?.current
+  const [draft, setDraft] = useState(null) // {base, specs: {id: text}, cells: [...], note}
+  const [sel, setSel] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const [msg, setMsg] = useState(null)
+  const nav = useNavigate()
+
+  const d = draft && cur && draft.base === cur.version ? draft : cur ? {base: cur.version, specs: {}, cells: cur.cells.map(c => ({...c})), note: ''} : null
+  const upd = f => setDraft({...d, ...f(d)})
+  const node = cur?.graph.nodes.find(n => n.id === sel)
+  const ids = cur ? cur.graph.nodes.filter(n => n.type !== 'claim').map(n => n.id) : []
+  const changed = d && (Object.keys(d.specs).length > 0 || JSON.stringify(d.cells) !== JSON.stringify(cur.cells))
+
+  async function save(andRun) {
+    setBusy(true); setErr(null); setMsg(null)
+    try {
+      const edits = {}
+      for (const [id, t] of Object.entries(d.specs)) {
+        try { edits[id] = JSON.parse(t) } catch { throw new Error(`settings of ${id} are not valid JSON`) }
+      }
+      const v = await cg(`/papers/${ctx.pid}/graph/versions`, {method: 'POST', body: {base: d.base, edits, cells: d.cells, note: d.note || null}})
+      if (andRun) await cg(`/papers/${ctx.pid}/graph/versions/${v.version}/run`, {method: 'POST'})
+      setDraft(null); setVer(v.version)
+      setMsg(`Saved as v${v.version}${andRun ? ' and started a run (it goes to a worker; answer any gate in Pipeline)' : ''}.`)
+      g.reload(); ctx.reload && ctx.reload()
+    } catch (e) { setErr(e) } finally { setBusy(false) }
+  }
+  async function runIt() {
+    setBusy(true); setErr(null); setMsg(null)
+    try { await cg(`/papers/${ctx.pid}/graph/versions/${cur.version}/run`, {method: 'POST'}); setMsg(`Started a run of v${cur.version}.`); g.reload(); ctx.reload && ctx.reload() }
+    catch (e) { setErr(e) } finally { setBusy(false) }
+  }
+
+  return (
+    <>
+      <div className="page-header">
+        <h2>Experiment Lab</h2>
+        <p className="sub">Change a step of the experiment (its settings or its code), save it as a new version and run it. Every version is kept; compare any two in <Link className="lk" to="/versions">Version Comparison</Link>.</p>
+      </div>
+      <Pick ctx={ctx}/>
+      <NoGraph g={g}/>
+      {err && <Err e={err}/>}
+      {msg && <div className="card-panel" style={{marginBottom: 14}}>{msg}</div>}
+      {cur && d && (
+        <>
+          <div style={{display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14}}>
+            <VersionPick label="Start from" versions={g.data.versions} value={cur.version} onChange={v => { setVer(v); setDraft(null); setSel(null) }}/>
+            <button className="btn" disabled={busy || !cur.cells.length} onClick={runIt} title={cur.cells.length ? '' : 'this version has no code yet'}>Run v{cur.version} as is</button>
+          </div>
+          {!cur.cells.length && <div className="card-panel" style={{marginBottom: 14}}>This version has no notebook yet. Start an analysis with notebook generation on (the default) and approve the generated notebook in <Link className="lk" to="/pipeline">Pipeline</Link>; its cells appear here bound to the graph.</div>}
+          <GraphView graph={cur.graph} cells={d.cells} selected={sel} onSelect={setSel}
+            highlight={Object.fromEntries(Object.keys(d.specs).map(k => [k, 'modified']))}/>
+          <div style={{display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.4fr)', gap: 16, marginTop: 16}}>
+            <div className="card-panel">
+              {node ? (
+                <>
+                  <div style={{marginBottom: 6}}><b>{node.id}</b> <Tag c={PROV_TAG[node.provenance] || 'na'}>{node.provenance}</Tag></div>
+                  <div className="lab">Settings (JSON; keys you set are merged in)</div>
+                  <textarea className="code" spellCheck={false} style={{width: '100%', minHeight: 200, fontFamily: 'monospace', fontSize: 12}}
+                    value={d.specs[node.id] ?? jsonText(node.spec)} onChange={e => upd(x => ({specs: {...x.specs, [node.id]: e.target.value}}))}/>
+                  {d.specs[node.id] != null && <button className="btn" style={{marginTop: 6}} onClick={() => upd(x => { const s = {...x.specs}; delete s[node.id]; return {specs: s} })}>Undo settings change</button>}
+                  <div style={{fontSize: 12, color: 'var(--t2)', marginTop: 8}}>Settings record what the experiment should do and change the node's hash. To change what actually runs, edit the bound code on the right.</div>
+                </>
+              ) : <div style={{fontSize: 13, color: 'var(--t2)'}}>Click a node in the graph to edit its settings.</div>}
+            </div>
+            <div className="card-panel">
+              <div className="lab" style={{marginBottom: 6}}>Notebook cells</div>
+              {d.cells.map((c, i) => (
+                <div key={i} style={{marginBottom: 12, outline: sel && c.node_id === sel ? '2px solid #f59e0b' : 'none', borderRadius: 6}}>
+                  <div style={{display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4, fontSize: 12}}>
+                    <span className="m">[{i + 1}]</span>
+                    <select value={c.node_id || ''} onChange={e => upd(x => ({cells: x.cells.map((y, j) => j === i ? {...y, node_id: e.target.value || null} : y)}))}>
+                      <option value="">setup</option>{ids.map(id => <option key={id} value={id}>{id}</option>)}
+                    </select>
+                    <button className="btn" style={{padding: '2px 8px'}} onClick={() => upd(x => ({cells: x.cells.filter((_, j) => j !== i)}))}>remove</button>
+                  </div>
+                  <textarea spellCheck={false} style={{width: '100%', minHeight: Math.min(320, 40 + 16 * c.source.split('\n').length), fontFamily: 'monospace', fontSize: 12}}
+                    value={c.source} onChange={e => upd(x => ({cells: x.cells.map((y, j) => j === i ? {...y, source: e.target.value} : y)}))}/>
+                </div>
+              ))}
+              <button className="btn" onClick={() => upd(x => ({cells: [...x.cells, {node_id: sel && ids.includes(sel) ? sel : null, source: ''}]}))}>+ Add cell</button>
+            </div>
+          </div>
+          <div className="card-panel" style={{marginTop: 16, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap'}}>
+            <input placeholder="What did you change and why? (shown in comparisons)" style={{flex: 1, minWidth: 260}} value={d.note} onChange={e => upd(() => ({note: e.target.value}))}/>
+            <button className="btn" disabled={busy || !changed} onClick={() => save(false)}>Save as new version</button>
+            <button className="btn primary" disabled={busy || !changed || !d.cells.length} onClick={() => save(true)}>Save and run</button>
+            {changed && <button className="btn" disabled={busy} onClick={() => setDraft(null)}>Discard</button>}
+            <button className="btn" onClick={() => nav('/versions')}>Compare versions →</button>
+          </div>
+          <div className="lab" style={{margin: '18px 0 6px'}}>Runs of v{cur.version}</div>
+          <RunsTable runs={cur.runs}/>
+        </>
+      )}
+    </>
+  )
+}
+
+const ATTR_TAG = {attributed: 'ok', no_attributable_effect: 'na', inconclusive: 'wa'}
+export function Versions({ctx}) {
+  const g = useGraph(ctx, null)
+  const vs = g.data?.versions || []
+  const [a, setA] = useState(null)
+  const [b, setB] = useState(null)
+  const va = a || (vs.length > 1 ? vs[vs.length - 2].version : vs[0]?.version)
+  const vb = b || vs[vs.length - 1]?.version
+  const cmp = useCg(ctx.pid && va && vb && va !== vb ? `/papers/${ctx.pid}/graph/compare?a=${va}&b=${vb}&at=${runKey(ctx)}` : null,
+    {every: d => ([...(d?.runs_a || []), ...(d?.runs_b || [])].some(r => ACTIVE.includes(r.status)) ? 3000 : 0)})
+  const c = cmp.data
+  const hl = c ? Object.fromEntries([...c.diff.invalidated.map(i => [i, 'invalid']), ...c.diff.modified.map(m => [m.node_id, 'modified']), ...c.diff.added.map(i => [i, 'added'])]) : {}
+  const gb = useCg(ctx.pid && vb ? `/papers/${ctx.pid}/graph?version=${vb}` : null)
+  return (
+    <>
+      <div className="page-header">
+        <h2>Version Comparison</h2>
+        <p className="sub">What changed between two versions of the experiment, which downstream results that invalidates, and whether a metric change can be attributed to the edit or is within seed noise (needs at least 2 clean runs per version).</p>
+      </div>
+      <Pick ctx={ctx}/>
+      <NoGraph g={g}/>
+      {vs.length === 1 && <Empty t={<>Only one version exists. Make an edit in <Link className="lk" to="/lab">Experiment Lab</Link> to create a second one.</>}/>}
+      {vs.length > 1 && (
+        <>
+          <div style={{display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 16}}>
+            <VersionPick label="A (baseline)" versions={vs} value={va} onChange={setA}/>
+            <VersionPick label="B (edited)" versions={vs} value={vb} onChange={setB}/>
+          </div>
+          {va === vb && <Empty t="Pick two different versions."/>}
+          <Err e={cmp.err}/>
+          {c && (
+            <>
+              {gb.data?.current && <GraphView graph={gb.data.current.graph} cells={gb.data.current.cells} highlight={hl}/>}
+              <div style={{fontSize: 12, color: 'var(--t2)', margin: '8px 0 18px'}}>Yellow: edited · green: added · red: result invalidated by an upstream change{c.diff.env_changed ? ' · the environment changed too' : ''}</div>
+              <div className="reg-card" style={{marginBottom: 18}}><table>
+                <thead><tr className="lab"><th>Node</th><th>Change</th></tr></thead>
+                <tbody>
+                  {c.diff.added.map(i => <tr key={'a' + i}><td className="m">{i}</td><td><Tag c="ok">added</Tag></td></tr>)}
+                  {c.diff.removed.map(i => <tr key={'r' + i}><td className="m">{i}</td><td><Tag c="no">removed</Tag></td></tr>)}
+                  {c.diff.modified.map(m => (
+                    <tr key={'m' + m.node_id}><td className="m">{m.node_id}</td><td>
+                      {Object.entries(m.spec_changes).map(([k, [o, n]]) => <div key={k} className="m" style={{fontSize: 12.5}}>{k}: {JSON.stringify(o)} → <b>{JSON.stringify(n)}</b></div>)}
+                      {!Object.keys(m.spec_changes).length && <span style={{fontSize: 12.5}}>{m.fields.join(', ') || 'code changed'}</span>}
+                    </td></tr>))}
+                  {!c.diff.added.length && !c.diff.removed.length && !c.diff.modified.length && <tr><td colSpan={2} style={{color: 'var(--t2)'}}>No structural or settings change.</td></tr>}
+                </tbody>
+              </table></div>
+              {c.code_changes.length > 0 && (
+                <>
+                  <div className="lab" style={{marginBottom: 6}}>Code changes</div>
+                  {c.code_changes.map(x => (
+                    <div key={x.node_id || 'setup'} className="card-panel" style={{marginBottom: 12}}>
+                      <b className="m">{x.node_id || 'setup'}</b>
+                      <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 6}}>
+                        <pre className="code" style={{whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 260, overflow: 'auto', background: '#fee2e222'}}>{x.before || '(none)'}</pre>
+                        <pre className="code" style={{whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 260, overflow: 'auto', background: '#dcfce722'}}>{x.after || '(none)'}</pre>
+                      </div>
+                    </div>))}
+                </>
+              )}
+              <div className="lab" style={{margin: '18px 0 6px'}}>Did the edit change the result?</div>
+              {!c.attribution.length && <div className="card-panel">No metrics yet. Run both versions (from <Link className="lk" to="/lab">Experiment Lab</Link>, at least 2 clean runs each) to attribute a change.</div>}
+              {c.attribution.map(r => (
+                <div key={r.metric} className="card-panel" style={{marginBottom: 12}}>
+                  <div style={{display: 'flex', gap: 10, alignItems: 'center'}}><b>{r.metric}</b><Tag c={ATTR_TAG[r.status] || 'na'}>{r.status.replaceAll('_', ' ')}</Tag>
+                    {r.delta != null && <span className="m">Δ {r.delta > 0 ? '+' : ''}{num(r.delta)}{r.noise_se != null && <> (noise SE {num(r.noise_se)})</>}</span>}
+                    <span style={{fontSize: 12, color: 'var(--t2)'}}>n = {r.n_a} vs {r.n_b}</span></div>
+                  {r.contributions?.map(x => <div key={x.node_id} className="m" style={{fontSize: 12.5}}>{x.node_id}: {num(x.delta)}</div>)}
+                  {[...(r.flags || []), ...(r.caveats || [])].map((x, i) => <div key={i} style={{fontSize: 12, color: 'var(--t2)', marginTop: 3}}>{x}</div>)}
+                </div>))}
+              <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 10}}>
+                <div><div className="lab" style={{marginBottom: 6}}>Runs of v{va}</div><RunsTable runs={c.runs_a}/></div>
+                <div><div className="lab" style={{marginBottom: 6}}>Runs of v{vb}</div><RunsTable runs={c.runs_b}/></div>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </>
+  )
+}

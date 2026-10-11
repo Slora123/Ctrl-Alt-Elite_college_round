@@ -140,3 +140,21 @@ class ApiTokenRow(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class GraphVersionRow(Base):
+    """One immutable version of a paper's experiment graph, plus the notebook cells bound to its nodes."""
+    __tablename__ = "graph_versions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    paper_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(16), nullable=False)
+    change_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    graph: Mapped[dict[str, Any]] = mapped_column(_JSON, nullable=False)
+    cells: Mapped[list[Any]] = mapped_column(_JSON, nullable=False)  # ordered [{node_id, source}]
+    run_ids: Mapped[list[Any]] = mapped_column(_JSON, nullable=False)  # pipeline runs started from this version
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_graph_versions_paper_version", "paper_id", "version", unique=True),)

@@ -10,7 +10,7 @@ from crisisgrid_core.models import Gap, RunResult, Verdict, utcnow
 from crisisgrid_core.papers import ArtifactInventory, ParsedPaper
 from crisisgrid_core.routing import RouteDecision
 
-GateKind = Literal["data", "gap", "stuck", "final", "action"]
+GateKind = Literal["data", "gap", "stuck", "final", "action", "notebook"]
 
 # system_design 3.3: what a human may answer at each kind of gate
 ALLOWED_ACTIONS: dict[str, list[str]] = {
@@ -19,6 +19,7 @@ ALLOWED_ACTIONS: dict[str, list[str]] = {
     "stuck": ["retry_with_hint", "edit_code", "skip_stage", "abort"],
     "final": ["accept", "request_rerun", "edit_caveats"],
     "action": ["approve", "edit", "reject"],
+    "notebook": ["approve", "edit", "reject"],  # review a generated notebook before it runs
 }
 
 
@@ -81,7 +82,12 @@ class RunState(BaseModel):
     assumptions_approved: bool = False
     hints: dict[str, str] = Field(default_factory=dict)
     caveats: list[str] = Field(default_factory=list)
-    notebook: list[dict[str, str]] | None = None  # cells to run (imported .ipynb); None = nothing to execute yet
+    notebook: list[dict[str, str]] | None = None  # cells to run (imported .ipynb or generated); None = nothing to execute yet
+    generated: bool = False  # the notebook was written by the system (not the authors): results are directional only
+    requirements: list[str] = Field(default_factory=list)  # packages the (generated) notebook needs; installed by the worker's env
+    assumptions: list[str] = Field(default_factory=list)  # what the generated notebook assumed or scaled down
+    scaled_down: bool = False
+    notebook_env_id: str | None = None  # the Paper Environment holding an editable copy of the generated notebook
     seeds: list[int] = Field(default_factory=lambda: [0, 1, 2])
     job_ids: list[str] = Field(default_factory=list)
     run_results: list[RunResult] = Field(default_factory=list)

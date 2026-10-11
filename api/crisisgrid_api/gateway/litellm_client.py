@@ -37,7 +37,14 @@ class LiteLLMClient:
         except Exception as e:  # noqa: BLE001  (service unavailable, connection errors, ...)
             raise ProviderError("server", str(e)) from e
         usage = getattr(r, "usage", None)
+        text = r.choices[0].message.content or ""
+        if not text.strip():
+            finish = getattr(r.choices[0], "finish_reason", None)
+            # typical with reasoning models (e.g. gpt-oss): the whole output budget went into hidden reasoning
+            raise ProviderError("invalid", f"{model} returned an empty answer (finish_reason={finish}). If this is a reasoning "
+                                "model it spent the whole output budget thinking: raise CG_LLM_MAX_TOKENS or use a non-reasoning "
+                                "instruct model (e.g. nvidia_nim/meta/llama-3.3-70b-instruct).")
         return LLMResponse(
-            text=r.choices[0].message.content or "", model=getattr(r, "model", model) or model,
+            text=text, model=getattr(r, "model", model) or model,
             prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0, completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
         )

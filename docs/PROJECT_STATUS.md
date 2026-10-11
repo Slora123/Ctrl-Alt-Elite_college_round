@@ -112,8 +112,16 @@ scrubbing, offline demo: ✅ (with their stated caveats, e.g. rules R01–R11 ar
 - ⬜ Reconciling `paper_env.domain` with `core.models` (uuid4 vs uuid7, separate DBs): their decision D-02/D-08.
 
 ### 3.3 Pipeline / product (from `FEATURES.md`, unchanged)
-Graph builder, Env builder and Code rebuilder agents; graph persistence and Version Comparison endpoints; wiring attribution
-into the pipeline; PDF report export; cost caps / AWS budgets; Colab bootstrap and desktop app; golden-paper recorded demo.
+- 🟡 **Notebook generator** (`agents/notebook_gen.py`, on by default in `run_all.py`, `--no-generate` to turn off): when no notebook is
+  attached, a model writes a scaled-down notebook (AST-checked, package allowlist, must `report_metric` a claim metric). It opens a
+  `notebook` gate (approve / edit in the Notebook page / reject) and only then runs on a worker; verdicts are labelled directional.
+  Wired and unit-tested, not yet run end to end against a real LLM + worker.
+- ✅ **Experiment graph, versions, comparison** (`graphs.py`, migration 0007): a deterministic graph builder from the parsed paper
+  (no LLM), notebook cells bound to nodes, immutable versions, human edits (settings and code) as new versions, run a version,
+  compare two versions (structural diff, invalidated nodes, code diff, attribution when both have >= 2 clean runs). Smoke test:
+  `api/tests/test_graph_api.py`.
+
+Still open: Env builder agent; LLM-written graph (the builder is rule-based); PDF report export; cost caps / AWS budgets; Colab bootstrap and desktop app; golden-paper recorded demo.
 
 ### 3.4 Website
 - ✅ **Dashboard connected to the real backend.** Papers (upload + automatic analysis + delete), Paper Understanding (quote-verified
@@ -121,8 +129,9 @@ into the pipeline; PDF report export; cost caps / AWS budgets; Colab bootstrap a
   Evidence Reports (Markdown view/download), Experiment History, Mission Control and Settings all read the FastAPI. Gates (data, gap,
   stuck, final, action) can be answered on any analysis page. The mock engine is gone. Covered by `website/e2e/dashboard.mjs` (35 checks
   in a real browser, plus a no-LLM mode) and `api/tests/test_dashboard_api.py`.
-- ⬜ **Experiment Lab, Experiment Graph and Version Comparison** have no backend (Graph builder, graph persistence, attribution wiring):
-  their pages say so. The Node API's remaining routes are unused and can be retired.
+- 🟡 **Experiment Lab, Experiment Graph and Version Comparison** are on real data (`/papers/{id}/graph*`): graph view, node details with
+  paper quotes, editing settings/code into a new version, save-and-run, version diff and attribution. Not covered by browser E2E yet.
+  The Node API's remaining routes are unused and can be retired.
 - ⬜ Browser E2E is manual (`node e2e/*.mjs` against a running system); not in CI. ⬜ No favicon; bundle is one large chunk.
 
 ---
@@ -134,7 +143,7 @@ into the pipeline; PDF report export; cost caps / AWS budgets; Colab bootstrap a
    browser E2E scripts into CI jobs.
 4. **Security pass** on auth: HTTPS + headers, password reset, audit log, shared revocation for the Node API (or move it onto
    the FastAPI), review token storage.
-5. **Retire the Node backend** (nothing calls it now) and build the Graph builder so Lab / Graph / Version Comparison can come back on real data.
+5. **Retire the Node backend** (nothing calls it now).
 6. Reconcile the two domain models and persist kernel sessions; then AWS GPU adapter + cost accounting.
 
 ---

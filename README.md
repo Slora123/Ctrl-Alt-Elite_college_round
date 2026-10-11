@@ -172,5 +172,5 @@ diff-based risk classification, number-checked report narratives.
 
 Not done or not verified (details in `docs/decisions.md`): any real LLM call (the LiteLLM adapter has never run against a provider),
 Docker/Postgres (tests use SQLite), Docker sandboxing (workers are restricted subprocesses with **no network/filesystem limits**),
-user authentication, the Graph/Env/Code-rebuilder agents, graph persistence and Version Comparison endpoints, PDF export, the
-notebook UI, and `paper_env` integration.
+the Env-builder agent, PDF export. (Auth, the notebook generator, graph versions and Version Comparison are now built: see
+`docs/PROJECT_STATUS.md`.)
