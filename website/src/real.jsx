@@ -156,7 +156,7 @@ const NEEDS = {
   'action:edit': ['source', 'The replacement source for the cell', 8],
 }
 
-function GatePanel({run, onAnswered}) {
+function GatePanel({run, onAnswered, compact = false}) {
   const {user} = useAuth()
   const writer = user?.role !== 'viewer'
   const open = run?.status === 'waiting_gate'
@@ -165,6 +165,16 @@ function GatePanel({run, onAnswered}) {
   const [err, setErr] = useState(null)
   const [busy, setBusy] = useState('')
   if (!open) return null
+  if (compact) {  // other tabs only point at the decision; the full panel lives on Paper Understanding so tabs do not all look alike
+    const titles = (g.data || []).map(x => (GATE_INFO[x.kind] || [x.kind])[0])
+    return (
+      <div className="card-panel" style={{marginBottom: 16, borderColor: '#C98B2B', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap'}}>
+        <Tag c="wa">waiting for you</Tag>
+        <span style={{fontSize: 13.5, flex: 1}}>{titles.join(' · ') || 'A step needs your decision'}.</span>
+        <Link className="lk" to="/understand">Review and answer in Paper Understanding →</Link>
+      </div>
+    )
+  }
   const answer = async (gate, action) => {
     setErr(null); setBusy(gate.id + action)
     const need = NEEDS[`${gate.kind}:${action}`] || NEEDS[action]
@@ -233,7 +243,7 @@ function GatePanel({run, onAnswered}) {
  * The control strip every analysis page shares: the real status of the latest run, the button that starts the real pipeline
  * (analysis, or with a notebook a verification run on a worker) and the gates that are waiting for a decision.
  */
-function RunBar({ctx, notebook = false, onChange}) {
+function RunBar({ctx, notebook = false, onChange, full = false}) {
   const {user} = useAuth()
   const writer = user?.role !== 'viewer'
   const p = ctx.papers.find(x => x.id === ctx.pid)
@@ -265,7 +275,7 @@ function RunBar({ctx, notebook = false, onChange}) {
     : busy ? 'Starting…' : active ? 'Analysing…' : run ? 'Re-run analysis' : 'Analyse paper'
   return (
     <>
-      <GatePanel run={run} onAnswered={changed}/>
+      <GatePanel run={run} onAnswered={changed} compact={!full}/>
       <div className="card-panel" style={{marginBottom: 20}}>
         <div style={{display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap'}}>
           <RunTag run={run}/>
@@ -427,7 +437,7 @@ export function Understand({ctx}) {
         <p className="sub">What the paper states, extracted by the backend. Every “stated” value carries a quote that was verified to exist in the PDF.</p>
       </div>
       <Pick ctx={ctx}/>
-      <RunBar ctx={ctx} onChange={u.reload}/>
+      <RunBar ctx={ctx} full onChange={u.reload}/>
       <Err e={u.err}/>
       {u.loading && !d && ctx.pid && <Loading what="analysis"/>}
       {d && (
