@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const pdfParse = require('pdf-parse');
+const { PDFParse } = require('pdf-parse');
 import * as ai from './ai_mock.js';
 import { authMiddleware, loadSecret, isAdmin, AUTH_ENABLED } from './auth.js';
 
@@ -115,10 +115,15 @@ app.post('/api/papers', upload.single('file'), async (req, res) => {
   let text = "", pages = 0;
   let ext_ok = false;
   try {
-    const parsed = await pdfParse(data);
-    text = parsed.text;
-    pages = parsed.numpages;
-    ext_ok = true;
+    const parser = new PDFParse({ data: new Uint8Array(data) });
+    try {
+      const parsed = await parser.getText();
+      text = parsed.text || "";
+      pages = parsed.total ?? parsed.pages?.length ?? 0;
+      ext_ok = true;
+    } finally {
+      await parser.destroy();
+    }
   } catch (e) {
     console.warn("PDF parsing error", e);
   }

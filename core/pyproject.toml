@@ -3,7 +3,10 @@ name = "crisisgrid-core"
 version = "0.1.0"
 description = "CrisisGrid core: shared models, experiment graph service, claim verifier (pure code, no persistence)"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.6"]
+dependencies = [
+    "litellm>=1.104.2",
+    "pydantic>=2.6",
+]
 
 [dependency-groups]
 dev = ["pytest>=8"]
