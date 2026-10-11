@@ -3,6 +3,7 @@
 import {useState,useEffect,useRef,useCallback} from 'react'
 import {useNavigate,useSearchParams} from 'react-router-dom'
 import {cg,useAuth,getToken,authHeaders} from './auth'
+import {downloadNotebook} from './real'
 
 const Err=({e})=>e?<div className="err" style={{margin:'12px 0'}}>{String(e.message||e)}</div>:null
 const Tag=({c,children})=><span className={'tag '+c}>{children}</span>
@@ -111,6 +112,7 @@ export function Notebook(){
           {(envs||[]).map(x=><option key={x.id} value={x.id}>{x.alias}</option>)}
         </select>
         {cur&&<a className="btn g" href={`/cg/paper-env/ui/?env=${cur.id}`} target="_blank" rel="noreferrer">Open in a new tab ↗</a>}
+        {cur&&<button className="btn g" onClick={()=>downloadNotebook(cur.id,cur.alias||'notebook').catch(setErr)}>Download .ipynb</button>}
       </div>
       {!cur&&<form className="frm-card" onSubmit={create}>
         <div className="frm-grid">

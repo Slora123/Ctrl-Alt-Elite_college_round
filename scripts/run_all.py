@@ -138,7 +138,7 @@ def main() -> None:
     ap.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)  # kept for old commands: the worker now starts by default
     ap.add_argument("--no-generate", action="store_true", help="do not let the pipeline write experiment notebooks itself")
     ap.add_argument("--terminal", action="store_true", help="enable the notebook terminal (a real unsandboxed shell!)")
-    ap.add_argument("--llm-chain", default="", help="comma-separated LiteLLM model ids (or CG_LLM_CHAIN in .env), e.g. nvidia_nim/meta/llama-3.3-70b-instruct")
+    ap.add_argument("--llm-chain", default="", help="comma-separated LiteLLM model ids (or CG_LLM_CHAIN in .env), e.g. nvidia_nim/nvidia/nemotron-3-super-120b-a12b")
     ap.add_argument("--llm-key", default="", help="API key for the LLM provider")
     ap.add_argument("--state-dir", default="", help="where databases, environments and logs live (default: .cg)")
     ap.add_argument("--api-port", type=int, default=API_PORT)

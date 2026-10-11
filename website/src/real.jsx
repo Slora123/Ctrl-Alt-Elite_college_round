@@ -123,6 +123,12 @@ function Pick({ctx}) {
 }
 
 /** Start (or restart) a run of the real pipeline: parse + audit + route (+ clean runs when a notebook is attached). */
+/** Save a paper environment's notebook as an .ipynb file (goes through cg() so the login token is sent). */
+export async function downloadNotebook(envId, name = 'notebook') {
+  const nb = await cg(`/paper-env/paper-envs/${envId}/export.ipynb`)
+  download(`${name}.ipynb`, JSON.stringify(nb, null, 1), 'application/x-ipynb+json')
+}
+
 async function startAnalysis(paperId, body = {}) {
   return cg(`/papers/${paperId}/runs`, {method: 'POST', body})
 }
@@ -192,7 +198,8 @@ function GatePanel({run, onAnswered}) {
             {c.reason == null && c.risk_class && <p style={{fontSize: 12.5, color: 'var(--t2)'}}>Risk class: {c.risk_class}</p>}
             {gate.kind === 'final' && c.caveats?.length > 0 && <ul className="clean-list">{c.caveats.map(x => <li key={x}>{x}</li>)}</ul>}
             {gate.kind === 'notebook' && <>
-              {c.env_id && <p style={{fontSize: 13}}><a className="btn g" href={`#/notebook?env=${c.env_id}`}>Open / edit in the Notebook page ↗</a> <span style={{color: 'var(--t2)'}}>approve runs what is there at that moment</span></p>}
+              {c.env_id && <p style={{fontSize: 13}}><a className="btn g" href={`#/notebook?env=${c.env_id}`}>Open / edit in the Notebook page ↗</a>{' '}
+                <button className="btn g" onClick={() => downloadNotebook(c.env_id, 'generated')}>Download .ipynb</button> <span style={{color: 'var(--t2)'}}>approve runs what is there at that moment</span></p>}
               {c.scaled_down && <p style={{fontSize: 13}}><Tag c="wa">scaled down</Tag> the run is smaller than the paper’s; verdicts are capped at “partial”.</p>}
               {c.assumptions?.length > 0 && <><b style={{fontSize: 13}}>Assumptions</b><ul className="clean-list">{c.assumptions.map(x => <li key={x}>{x}</li>)}</ul></>}
               {c.requirements?.length > 0 && <p style={{fontSize: 13}}>Packages: <code>{c.requirements.join(', ')}</code></p>}
