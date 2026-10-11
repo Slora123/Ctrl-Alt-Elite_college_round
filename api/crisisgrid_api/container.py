@@ -48,7 +48,7 @@ def gateway_from_settings(settings: Settings, audit: SqlAuditLog) -> Gateway | N
     client = LiteLLMClient(api_key=settings.llm_api_key or None, api_base=settings.llm_api_base or None)
     long_out = AgentProfile(max_tokens=settings.llm_max_tokens)  # whole-paper extraction and code writing need room
     return Gateway([Provider(name=m, model=m, client=client) for m in models], audit=audit,
-                   profiles={"paper_parser": long_out, "notebook_gen": AgentProfile(max_tokens=max(settings.llm_max_tokens, 6144))})
+                   profiles={"default": long_out, "paper_parser": long_out, "notebook_gen": AgentProfile(max_tokens=max(settings.llm_max_tokens, 6144))})
 
 
 def build_container(engine: Engine, settings: Settings, *, gateway: Gateway | None = None, embedder: Embedder | None = None,
