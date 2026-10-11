@@ -1,0 +1,11 @@
+{
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/cg/:path*",
+      "destination": "https://13-203-201-194.sslip.io/:path*"
+    }
+  ]
+}
