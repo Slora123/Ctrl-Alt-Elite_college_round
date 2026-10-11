@@ -42,7 +42,7 @@ def gateway_from_settings(settings: Settings, audit: SqlAuditLog) -> Gateway | N
     models = [m.strip() for m in settings.llm_chain.split(",") if m.strip()]
     if not models:
         return None
-    client = LiteLLMClient(api_key=settings.llm_api_key or None)
+    client = LiteLLMClient(api_key=settings.llm_api_key or None, api_base=settings.llm_api_base or None)
     return Gateway([Provider(name=m, model=m, client=client) for m in models], audit=audit)
 
 

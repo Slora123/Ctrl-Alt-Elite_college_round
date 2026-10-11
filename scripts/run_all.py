@@ -159,7 +159,7 @@ def main() -> None:
         "CG_ENV": "dev", "CG_AUTH_SECRET": secret, "CG_AUTH_ENABLED": "0" if a.no_auth else "1",
         "CG_DATABASE_URL": f"sqlite:///{(STATE / 'crisisgrid.db').as_posix()}", "CG_DATA_DIR": str(STATE),
         "CG_PAPER_ENV_DIR": str(STATE / "paper_env"), "CG_PAPER_ENV_TERMINAL": "1" if a.terminal else "0",
-        "CG_LLM_CHAIN": a.llm_chain, "CG_LLM_API_KEY": a.llm_key, "CG_AUTH_URL": f"http://127.0.0.1:{API_PORT}",
+        "CG_LLM_CHAIN": a.llm_chain, "CG_LLM_API_KEY": a.llm_key, "CG_LLM_API_BASE": os.environ.get("CG_LLM_API_BASE", ""), "CG_AUTH_URL": f"http://127.0.0.1:{API_PORT}",
         "PAPER_ENV_ENABLE_TERMINAL": "1" if a.terminal else "0",
         # the website's Vite proxy and the Node backend find their neighbours through these
         "CG_API": f"http://127.0.0.1:{API_PORT}", "CG_NODE_API": f"http://127.0.0.1:{NODE_PORT}",

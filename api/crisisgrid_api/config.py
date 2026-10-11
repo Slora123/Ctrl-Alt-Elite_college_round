@@ -13,7 +13,8 @@ class Settings:
     s3_endpoint: str = "http://localhost:9000"
     s3_bucket: str = "crisisgrid"
     llm_chain: str = ""  # comma-separated LiteLLM model ids, tried in order, e.g. "groq/qwen/qwen3-32b,ollama/qwen2.5:7b"
-    llm_api_key: str = ""
+    llm_api_key: str = ""  # applied to EVERY model in the chain; for mixed providers leave it empty and use each provider's own env var
+    llm_api_base: str = ""  # e.g. a self-hosted NVIDIA NIM / vLLM / Ollama endpoint (OpenAI-compatible, usually ends in /v1)
     github_token: str = ""
     reaper_interval_s: float = 30.0  # how often to reap jobs whose worker stopped heartbeating; 0 disables
     worker_registration_token: str = ""  # if empty, registration is only open when CG_ENV=dev
@@ -43,6 +44,7 @@ class Settings:
             s3_bucket=e.get("CG_S3_BUCKET", d.s3_bucket),
             llm_chain=e.get("CG_LLM_CHAIN", d.llm_chain),
             llm_api_key=e.get("CG_LLM_API_KEY", d.llm_api_key),
+            llm_api_base=e.get("CG_LLM_API_BASE", d.llm_api_base),
             github_token=e.get("CG_GITHUB_TOKEN", d.github_token),
             reaper_interval_s=float(e.get("CG_REAPER_INTERVAL_S", d.reaper_interval_s)),
             worker_registration_token=e.get("CG_WORKER_REGISTRATION_TOKEN", d.worker_registration_token),
