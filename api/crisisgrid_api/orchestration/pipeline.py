@@ -387,7 +387,8 @@ class Orchestrator:
         if decision.decision == "needs_approval":
             state.pending_edit = edit
             return GateRequest("action", {"cell_index": i, "diagnosis": diag.model_dump(mode="json"), "diff": edit.diff,
-                                          "risk_class": decision.risk_class, "reason": decision.reason, "error": err})
+                                          "risk_class": decision.risk_class, "reason": decision.reason, "error": err,
+                                          "proposed_source": new})  # the UI starts the reviewer's "edit" answer from this
         raise EscalationRequired(f"the Action hook denied the proposed repair: {decision.reason}")
 
     def on_job_finished(self, run_id: str) -> None:
@@ -407,7 +408,8 @@ class Orchestrator:
             self._advance(run_id)
 
     def _node_reconstruct(self, state: RunState, guard: HarnessGuard) -> Step:
-        msg = "Environment build, execution and claim verification are not available in this build; no experiment was run."
+        msg = ("No experiment was run: no notebook was provided. "
+               "Attach a .ipynb that reports its metrics to run clean experiments on a worker.")
         if msg not in state.caveats:
             state.caveats.append(msg)
         return "report"

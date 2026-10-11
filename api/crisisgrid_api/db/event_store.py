@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from ..repos.interfaces import RunEvent
 from .base import SqlRepository
@@ -14,6 +14,12 @@ class SqlEventStore(SqlRepository):
         with self._scope() as s:
             s.add(RunEventRow(**event.model_dump()))
         return event
+
+    def delete_runs(self, run_ids: list[str]) -> None:
+        """Erase the history of runs (used when a paper is deleted: events can quote the paper and worker output)."""
+        if run_ids:
+            with self._scope() as s:
+                s.execute(delete(RunEventRow).where(RunEventRow.run_id.in_(run_ids)))
 
     def list(self, run_id: str, *, after_id: str | None = None, limit: int = 1000) -> list[RunEvent]:
         q = select(RunEventRow).where(RunEventRow.run_id == run_id)

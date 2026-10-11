@@ -53,6 +53,7 @@ class PaperRow(Base):
     size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     pdf: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)  # TODO: S3 (MinIO) once the storage layer exists
     owner_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)  # user that uploaded it
+    pages: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None for papers uploaded before migration 0006
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

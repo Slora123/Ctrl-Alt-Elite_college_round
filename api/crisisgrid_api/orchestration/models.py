@@ -41,6 +41,7 @@ class PaperRecord(BaseModel):
     filename: str = ""
     size: int = 0
     owner_id: str | None = None  # the user that uploaded it; None = created while authentication was off
+    pages: int | None = None  # None for papers uploaded before the page count was recorded
     created_at: datetime = Field(default_factory=utcnow)
 
 
