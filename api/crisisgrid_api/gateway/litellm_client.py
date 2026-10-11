@@ -21,8 +21,11 @@ class LiteLLMClient:
             raise ProviderError("rate_limit", str(e)) from e
         except litellm.Timeout as e:
             raise ProviderError("timeout", str(e)) from e
-        except litellm.AuthenticationError as e:
+        except (litellm.AuthenticationError, litellm.PermissionDeniedError) as e:
+            # includes e.g. Bedrock "your account is currently being verified": retrying will not help, fail over instead
             raise ProviderError("auth", str(e)) from e
+        except litellm.NotFoundError as e:  # unknown / unavailable model id
+            raise ProviderError("invalid", str(e)) from e
         except litellm.BadRequestError as e:
             raise ProviderError("invalid", str(e)) from e
         except Exception as e:  # noqa: BLE001  (service unavailable, connection errors, ...)

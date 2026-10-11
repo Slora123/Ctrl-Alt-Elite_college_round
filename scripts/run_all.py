@@ -78,15 +78,55 @@ def ensure_node() -> None:
         sh([npm, "run", "build"], fe)
 
 
-def wait(url: str, name: str, seconds: int = 60) -> None:
+def load_env_file() -> dict[str, str]:
+    """KEY=VALUE lines from <state>/env (git-ignored, keep it chmod 600): provider keys such as AWS_BEARER_TOKEN_BEDROCK or
+    CG_LLM_API_KEY go here instead of the command line, so they never end up in shell history or process listings."""
+    f = STATE / "env"
+    out: dict[str, str] = {}
+    if f.exists():
+        for line in f.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip().strip('"').strip("'")
+        if f.stat().st_mode & 0o077 and not WIN:
+            print(f"[run_all] warning: {f} is readable by other users; run: chmod 600 {f}")
+    return out
+
+
+def port_in_use(port: int) -> bool:
+    import socket
+    for fam, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        try:
+            with socket.socket(fam, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                if s.connect_ex((host, port)) == 0:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def tail(path: Path, n: int = 15) -> str:
+    try:
+        return "\n".join(path.read_text(errors="replace").splitlines()[-n:])
+    except OSError:
+        return "(no log)"
+
+
+def wait(url: str, name: str, proc: subprocess.Popen, log: Path, seconds: int = 90) -> None:
+    """Ready only when OUR process is alive and answers. A health answer from some other process on the port (a previous run)
+    must not count, and a child that already died is reported with its log instead of 'ready'."""
     for _ in range(seconds * 2):
+        if proc.poll() is not None:
+            sys.exit(f"[run_all] {name} exited with code {proc.returncode} while starting.\n--- {log.name} ---\n{tail(log)}")
         try:
             urllib.request.urlopen(url, timeout=2).read()
             print(f"[run_all] {name} ready  {url}")
             return
         except Exception:  # noqa: BLE001
             time.sleep(0.5)
-    sys.exit(f"{name} did not become ready at {url}; see {STATE / 'logs'}")
+    sys.exit(f"{name} did not become ready at {url}\n--- {log.name} ---\n{tail(log)}")
 
 
 def main() -> None:
@@ -105,6 +145,11 @@ def main() -> None:
     STATE = Path(a.state_dir).resolve() if a.state_dir else STATE
     API_PORT, NODE_PORT, WEB_PORT = a.api_port, a.node_port, a.web_port
 
+    busy = [(n, p) for n, p in (("CrisisGrid API", API_PORT), ("website API", NODE_PORT), ("website", WEB_PORT)) if port_in_use(p)]
+    if busy:  # typically a previous run_all that is still alive; starting anyway would "succeed" against the old servers
+        sys.exit("[run_all] these ports are already in use: " + ", ".join(f"{n} :{p}" for n, p in busy) +
+                 "\n  A previous run is probably still running. Stop it (Ctrl-C in its terminal, or: pkill -f run_all.py; "
+                 "pkill -f vite; pkill -f server.js; pkill -f crisisgrid_api), or pick other ports with --api-port/--node-port/--web-port.")
     py = ensure_python()
     ensure_node()
     logs = STATE / "logs"
@@ -119,13 +164,15 @@ def main() -> None:
         # the website's Vite proxy and the Node backend find their neighbours through these
         "CG_API": f"http://127.0.0.1:{API_PORT}", "CG_NODE_API": f"http://127.0.0.1:{NODE_PORT}",
     }
-    env = {**os.environ, **base}
+    env = {**os.environ, **load_env_file(), **base}
     procs: list[subprocess.Popen] = []
 
-    def spawn(name: str, cmd: list[str], cwd: Path, extra: dict | None = None) -> None:
+    def spawn(name: str, cmd: list[str], cwd: Path, extra: dict | None = None) -> subprocess.Popen:
         out = open(logs / f"{name}.log", "wb")
-        procs.append(subprocess.Popen(cmd, cwd=cwd, env={**env, **(extra or {})}, stdout=out, stderr=subprocess.STDOUT,
-                                      start_new_session=not WIN))
+        p = subprocess.Popen(cmd, cwd=cwd, env={**env, **(extra or {})}, stdout=out, stderr=subprocess.STDOUT,
+                             start_new_session=not WIN)
+        procs.append(p)
+        return p
 
     def stop(*_: object) -> None:
         print("\n[run_all] stopping…")
@@ -145,13 +192,13 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
 
     sh([str(py), "-m", "alembic", "upgrade", "head"], ROOT / "api", env=base, quiet=True)
-    spawn("crisisgrid-api", [str(py), "-m", "uvicorn", "crisisgrid_api.main:app", "--host", "127.0.0.1", "--port", str(API_PORT)], ROOT / "api")
-    wait(f"http://127.0.0.1:{API_PORT}/health", "CrisisGrid API")
-    spawn("website-api", [need("node", "Install Node.js 20+."), "server.js"], ROOT / "website" / "backend", {"PORT": str(NODE_PORT)})
-    wait(f"http://127.0.0.1:{NODE_PORT}/api/health", "website API")
-    spawn("website", [need("node", ""), str(ROOT / "website" / "node_modules" / "vite" / "bin" / "vite.js"), "--port", str(WEB_PORT), "--strictPort"],
-          ROOT / "website")
-    wait(f"http://localhost:{WEB_PORT}/", "website")
+    p = spawn("crisisgrid-api", [str(py), "-m", "uvicorn", "crisisgrid_api.main:app", "--host", "127.0.0.1", "--port", str(API_PORT)], ROOT / "api")
+    wait(f"http://127.0.0.1:{API_PORT}/health", "CrisisGrid API", p, logs / "crisisgrid-api.log")
+    p = spawn("website-api", [need("node", "Install Node.js 20+."), "server.js"], ROOT / "website" / "backend", {"PORT": str(NODE_PORT)})
+    wait(f"http://127.0.0.1:{NODE_PORT}/api/health", "website API", p, logs / "website-api.log")
+    p = spawn("website", [need("node", ""), str(ROOT / "website" / "node_modules" / "vite" / "bin" / "vite.js"), "--port", str(WEB_PORT), "--strictPort"],
+              ROOT / "website")
+    wait(f"http://localhost:{WEB_PORT}/", "website", p, logs / "website.log")
 
     if a.worker:  # dev: registration is open, so the worker registers itself (its token is printed in .cg/logs/worker.log)
         spawn("worker", [str(py), "-m", "crisisgrid_api.worker", "--api", f"http://127.0.0.1:{API_PORT}", "--name", "local-worker",
@@ -163,12 +210,15 @@ def main() -> None:
    Notebook UI     http://localhost:{WEB_PORT}/cg/paper-env/ui/
    API docs        http://127.0.0.1:{API_PORT}/docs
    Logs            {logs}
-   LLM agents      {'enabled: ' + a.llm_chain if a.llm_chain else 'NOT configured (pass --llm-chain/--llm-key); reading, notebooks and static audit still work'}
+   LLM agents      {'enabled: ' + a.llm_chain if a.llm_chain else 'NOT configured (pass --llm-chain; keys go in ' + str(STATE / 'env') + '); reading, notebooks and static audit still work'}
 Ctrl-C to stop.""")
     while True:
         for p in procs:
             if p.poll() is not None:
-                print(f"[run_all] a service exited with code {p.returncode}; see {logs}")
+                name = Path(p.args[1] if len(p.args) > 1 else p.args[0]).name
+                print(f"[run_all] a service ({' '.join(map(str, p.args[:3]))[:80]}) exited with code {p.returncode}; logs in {logs}")
+                for lf in sorted(logs.glob("*.log")):
+                    print(f"--- {lf.name} (last lines) ---\n{tail(lf, 6)}")
                 stop()
         time.sleep(1)
 
