@@ -53,18 +53,14 @@ def auth_secret() -> str:
 
 
 def ensure_python() -> Path:
+    """One uv workspace (pyproject.toml at the repo root): `uv sync` creates .venv with core, api and paper_env editable."""
     uv = need("uv", "Install uv: https://docs.astral.sh/uv/")
-    venv = ROOT / "api" / ".venv"
-    py = venv / ("Scripts/python.exe" if WIN else "bin/python")
-    stamp = venv / ".cg-installed"
-    if not py.exists():
-        sh([uv, "venv", "--python", "3.12", str(venv)], ROOT)
-    if not stamp.exists():
-        print("[run_all] installing Python packages (first run only)…")
-        pkgs = ["-e", str(ROOT / "core"), "-e", str(ROOT / "api")]
-        if not WIN:  # paper_env needs POSIX (fcntl, pty); on Windows the notebook environment is simply not mounted
-            pkgs += ["-e", str(ROOT / "paper_env")]
-        sh([uv, "pip", "install", "--python", str(py), *pkgs], ROOT)
+    py = ROOT / ".venv" / ("Scripts/python.exe" if WIN else "bin/python")
+    stamp = ROOT / ".venv" / ".cg-synced"
+    lock = ROOT / "uv.lock"
+    if not py.exists() or not stamp.exists() or stamp.stat().st_mtime < lock.stat().st_mtime:
+        print("[run_all] uv sync (installing the Python workspace)…")
+        sh([uv, "sync"], ROOT)
         stamp.write_text("ok")
     return py
 

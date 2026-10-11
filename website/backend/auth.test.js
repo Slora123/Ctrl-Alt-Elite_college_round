@@ -38,7 +38,7 @@ test('rejects algorithm confusion and tampering', () => {
 test('interoperates with the Python implementation (same HS256 format)', async () => {
   // a token produced by crisisgrid_api.auth.security.sign_jwt for the same secret and claims shape
   const { execFileSync } = await import('node:child_process');
-  const py = process.env.CG_PYTHON || `${process.cwd()}/../api/.venv/bin/python`;
+  const py = process.env.CG_PYTHON || `${process.cwd()}/../.venv/bin/python`;
   let tok;
   try {
     tok = execFileSync(py, ['-c', `

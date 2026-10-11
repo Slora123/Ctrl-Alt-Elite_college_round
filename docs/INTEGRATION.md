@@ -14,6 +14,10 @@
 
 Start everything: `python scripts/run_all.py` (see the script's header for flags). State lives in `.cg/`.
 
+Python packaging: `core`, `api` and `paper_env` form **one uv workspace** (root `pyproject.toml` + `uv.lock`). `uv sync` anywhere in the repo
+creates a single `.venv` with all three installed editable; `crisisgrid-api` depends on `crisisgrid-core` and `paper-env` through
+`[tool.uv.sources] … workspace = true`.
+
 ## Authentication (single sign-on across all three backends)
 
 * **Accounts** live in the CrisisGrid API (`users`, `api_tokens`; Alembic revision 0005). Passwords are scrypt-hashed;

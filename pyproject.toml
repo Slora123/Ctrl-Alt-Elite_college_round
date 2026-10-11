@@ -1,0 +1,39 @@
+# One uv workspace for the whole Python side of CrisisGrid:
+#   core       crisisgrid-core   shared models, graph service, claim verifier (pure code)
+#   api        crisisgrid-api    FastAPI: accounts, pipeline, workers; mounts paper_env at /paper-env
+#   paper_env  paper-env         notebook environments: uv envs, kernels, datasets, checkpoints
+#
+#   uv sync            # from the repo root OR from any member directory: one .venv, one uv.lock, members installed editable
+#   uv run pytest      # from inside a member directory runs that member's tests
+#
+# This root is only a workspace (not a package); it just pins what `uv sync` installs and the shared dev tools.
+[project]
+name = "crisisgrid"
+version = "0.1.0"
+description = "CrisisGrid workspace root (installs core, api and paper_env together)"
+requires-python = ">=3.11"
+dependencies = [
+    "crisisgrid-core",
+    "crisisgrid-api",
+    "paper-env",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-timeout>=2.4.0",
+    "httpx>=0.27",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[tool.uv]
+package = false          # the root itself is not built or installed
+
+[tool.uv.workspace]
+members = ["core", "api", "paper_env"]
+
+[tool.uv.sources]
+crisisgrid-core = { workspace = true }
+crisisgrid-api = { workspace = true }
+paper-env = { workspace = true }

@@ -57,6 +57,7 @@ The structure above represents the main website files and may not include every 
 ```bash
 python scripts/run_all.py            # website :5173, website API :8000, CrisisGrid API :8100 (incl. notebook environment)
 python scripts/run_all.py --help     # --no-auth, --worker, --terminal, --llm-chain/--llm-key
+uv sync                              # just the Python side: one workspace, one .venv (core + api + paper_env)
 ```
 
 Open http://localhost:5173/ and create the first account (it becomes the administrator). Architecture, authentication and

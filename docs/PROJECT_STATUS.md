@@ -152,12 +152,14 @@ optional executor. Still true: it is POSIX-only, not connected to Redis, and not
 - Existing tests that were order-dependent or pinned the previous migration revision were corrected.
 
 ## 7. How to run the tests
+The Python side is **one uv workspace** (root `pyproject.toml`, one `uv.lock`, one `.venv` shared by `core`, `api` and `paper_env`).
 ```bash
-cd core && ../api/.venv/bin/python -m pytest              # needs: python scripts/run_all.py once (creates api/.venv)
-cd api  && .venv/bin/python -m pytest
-cd paper_env && uv run pytest                               # ~10 min (real kernels, uv installs)
-cd website && npm test
+uv sync                                                      # from the repo root or from any of core/ api/ paper_env/
+cd core && uv run pytest
+cd api && uv run pytest
+cd paper_env && uv run pytest                                # ~10 min (real kernels, uv installs)
+cd website && npm install && npm test
 # browser E2E (needs a running system; use an isolated one so test accounts do not pollute yours):
 python scripts/run_all.py --state-dir /tmp/cg-e2e --api-port 18100 --node-port 18001 --web-port 15173
-cd paper_env/frontend && BASE=http://localhost:15173 node e2e/website.mjs
+cd paper_env/frontend && npm install && BASE=http://localhost:15173 node e2e/website.mjs
 ```

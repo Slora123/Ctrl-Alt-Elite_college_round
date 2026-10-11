@@ -16,21 +16,15 @@ jobs:
         working-directory: ${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Install
-        run: |
-          pip install -e ../core
-          if [ "${{ matrix.package }}" = "api" ]; then pip install -e .; fi
-          pip install pytest httpx ruff mypy
+      - uses: astral-sh/setup-uv@v5
+      - name: Install (one uv workspace: core, api and paper_env share a lock file and a venv)
+        run: uv sync --frozen
       - name: Lint
-        run: ruff check .
+        run: uv run ruff check .
       - name: Type check
-        run: mypy ${{ matrix.package == 'core' && 'crisisgrid_core' || 'crisisgrid_api' }}
+        run: uv run mypy ${{ matrix.package == 'core' && 'crisisgrid_core' || 'crisisgrid_api' }}
       - name: Test
-        run: pytest
+        run: uv run pytest
 
   paper-env:
     # paper_env uses POSIX-only APIs (fcntl) and needs uv; it cannot run on Windows. It was NOT verified when this job was
@@ -44,6 +38,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: Install
-        run: uv sync
+        run: uv sync --frozen
       - name: Test
         run: uv run pytest
