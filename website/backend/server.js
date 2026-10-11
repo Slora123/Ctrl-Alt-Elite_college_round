@@ -8,7 +8,6 @@ import crypto from 'crypto';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { PDFParse } = require('pdf-parse');
-import * as ai from './ai_mock.js';
 import { authMiddleware, loadSecret, isAdmin, AUTH_ENABLED } from './auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -77,7 +76,7 @@ function analyze(text) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, ai_provider: ai.PROVIDER, auth: AUTH_ENABLED });
+  res.json({ ok: true, auth: AUTH_ENABLED });
 });
 
 // ---- authentication + ownership (everything below requires a valid token) -----------------------------------------
@@ -427,12 +426,12 @@ app.get('/api/papers/:pid/report', (req, res) => {
   for (const x of I.claims) {
     const rep = x.reproduced !== null && x.reproduced !== undefined ? x.reproduced : null;
     const diff = rep !== null ? `, abs diff ${(rep - x.reported > 0 ? '+' : '')}${(rep - x.reported).toFixed(4)}` : ", not tested";
-    L.push(`- ${x.statement}${x.source === 'mock-ai' ? ' [mock]' : ''}: reported ${x.reported}, reproduced ${rep !== null ? rep : 'None'}${diff}`);
+    L.push(`- ${x.statement}: reported ${x.reported}, reproduced ${rep !== null ? rep : 'None'}${diff}`);
   }
   
   L.push("", "## Experiment versions");
   for (const x of I.versions) {
-    L.push(`- ${x.name}: ${JSON.stringify(x.config)}, metric ${x.metric !== undefined ? x.metric : 'None'} (${x.run?.source === 'mock-ai' ? 'mock engine' : 'user-entered'})`);
+    L.push(`- ${x.name}: ${JSON.stringify(x.config)}, metric ${x.metric !== undefined ? x.metric : 'None'} (user-entered)`);
   }
   
   L.push("", "## Audit findings");
@@ -448,103 +447,6 @@ app.get('/api/papers/:pid/report', (req, res) => {
   
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(L.join('\n'));
-});
-
-// AI Endpoints
-app.get('/api/ai/status', (req, res) => res.json({ provider: ai.PROVIDER, mock: ai.PROVIDER === 'mock' }));
-
-app.post('/api/ai/papers/:pid/understand', (req, res) => {
-  const pid = parseInt(req.params.pid);
-  const c = db();
-  const r = c.prepare("select * from papers where id=?").get(pid);
-  if (!r) { c.close(); return res.status(404).json({ detail: "Paper not found" }); }
-  const out = ai.understand(r.title, r.text || "", JSON.parse(r.analysis || "{}"));
-  out.created = now();
-  c.prepare("insert or replace into kv values(?,?)").run("ai:understand:" + pid, JSON.stringify(out));
-  log(c, "AI analysis (mock)", r.title.substring(0, 60), pid);
-  c.close();
-  res.json(out);
-});
-
-app.get('/api/ai/papers/:pid/understand', (req, res) => {
-  const c = db();
-  const r = c.prepare("select v from kv where k=?").get("ai:understand:" + req.params.pid);
-  c.close();
-  res.json(r ? JSON.parse(r.v) : null);
-});
-
-app.post('/api/ai/papers/:pid/extract-claims', (req, res) => {
-  const pid = parseInt(req.params.pid);
-  const c = db();
-  const r = c.prepare("select * from papers where id=?").get(pid);
-  if (!r) { c.close(); return res.status(404).json({ detail: "Paper not found" }); }
-  
-  const existing = c.prepare("select data from items where kind='claims' and paper_id=?").all(pid).map(x => JSON.parse(x.data).statement);
-  const existingSet = new Set(existing);
-  
-  const claims = ai.extract_claims(r.text || "", r.title);
-  let n = 0;
-  for (const [st, v] of claims) {
-    if (existingSet.has(st)) continue;
-    c.prepare("insert into items(kind,paper_id,data,created) values('claims',?,?,?)").run(pid, JSON.stringify({ statement: st, reported: v, reproduced: null, source: "mock-ai" }), now());
-    n++;
-  }
-  log(c, "Claims extracted (mock)", `${n} new`, pid);
-  c.close();
-  res.json({ added: n });
-});
-
-app.post('/api/ai/claims/:iid/reproduce', (req, res) => {
-  const iid = parseInt(req.params.iid);
-  const c = db();
-  const r = c.prepare("select * from items where id=? and kind='claims'").get(iid);
-  if (!r) { c.close(); return res.status(404).json({ detail: "Not found" }); }
-  
-  const d = JSON.parse(r.data);
-  const out = ai.reproduce_claim(d.statement, d.reported, iid);
-  d.reproduced = out.reproduced;
-  d.source = "mock-ai";
-  c.prepare("update items set data=? where id=?").run(JSON.stringify(d), iid);
-  log(c, "Claim reproduced (mock)", d.statement.substring(0, 70), r.paper_id);
-  c.close();
-  res.json(out);
-});
-
-app.post('/api/ai/items/versions/:iid/run', (req, res) => {
-  const iid = parseInt(req.params.iid);
-  const c = db();
-  const r = c.prepare("select * from items where id=? and kind='versions'").get(iid);
-  if (!r) { c.close(); return res.status(404).json({ detail: "Not found" }); }
-  
-  const d = JSON.parse(r.data);
-  const out = ai.run_experiment(d.config || {});
-  d.metric = out.metric;
-  d.run = { curve: out.curve, runtime_s: out.runtime_s, source: "mock-ai", ts: now() };
-  c.prepare("update items set data=? where id=?").run(JSON.stringify(d), iid);
-  log(c, "Experiment run (mock)", `${d.name}: metric ${out.metric}`, r.paper_id);
-  c.close();
-  res.json(out);
-});
-
-app.post('/api/ai/papers/:pid/audit', (req, res) => {
-  const pid = parseInt(req.params.pid);
-  const c = db();
-  const r = c.prepare("select * from papers where id=?").get(pid);
-  if (!r) { c.close(); return res.status(404).json({ detail: "Paper not found" }); }
-  
-  const existing = c.prepare("select data from items where kind='findings' and paper_id=?").all(pid).map(x => JSON.parse(x.data).description);
-  const existingSet = new Set(existing);
-  
-  const findings = ai.audit(r.text || "", JSON.parse(r.analysis || "{}"));
-  let n = 0;
-  for (const f of findings) {
-    if (existingSet.has(f.description)) continue;
-    c.prepare("insert into items(kind,paper_id,data,created) values('findings',?,?,?)").run(pid, JSON.stringify(f), now());
-    n++;
-  }
-  log(c, "AI audit (mock)", `${n} new findings`, pid);
-  c.close();
-  res.json({ added: n });
 });
 
 // Seed DB logic

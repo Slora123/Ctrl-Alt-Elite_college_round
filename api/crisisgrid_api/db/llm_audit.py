@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from ..gateway.types import LLMCallRecord, Message
 from .base import SqlRepository
@@ -15,6 +15,12 @@ class SqlAuditLog(SqlRepository):
         row["ts"] = record.ts
         with self._scope() as s:
             s.add(LLMCallRow(**row))
+
+    def delete_runs(self, run_ids: list[str]) -> None:
+        """The prompts contain the paper's text, so they are erased with the paper."""
+        if run_ids:
+            with self._scope() as s:
+                s.execute(delete(LLMCallRow).where(LLMCallRow.run_id.in_(run_ids)))
 
     def list(self, *, run_id: str | None = None, limit: int = 1000) -> list[LLMCallRecord]:
         q = select(LLMCallRow)

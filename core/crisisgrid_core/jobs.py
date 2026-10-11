@@ -56,7 +56,7 @@ class JobRequirements(BaseModel):
     gpu_required: bool = False
     needs_network: bool = False  # e.g. dataset not cached yet
     est_runtime_s: int = 600
-    python: str = "3.12"
+    python: str | None = None  # None: run with whatever interpreter the worker has; set it only when a job truly needs one
     require_strong_isolation: bool = False  # untrusted code on shared compute: refuse "lower isolation" workers
 
 
@@ -82,7 +82,7 @@ def match(req: JobRequirements, caps: Capabilities) -> tuple[bool, list[str]]:
         why.append("job needs network access")
     if req.est_runtime_s > caps.max_runtime_s:
         why.append(f"estimated runtime {req.est_runtime_s}s exceeds the worker's limit {caps.max_runtime_s}s")
-    if req.python not in caps.python_versions:
+    if req.python is not None and req.python not in caps.python_versions:
         why.append(f"python {req.python} not available")
     if req.require_strong_isolation and caps.isolation != "docker":
         why.append("job requires strong isolation; this worker is lower-isolation (no Docker)")

@@ -1,7 +1,7 @@
 # How the pieces fit together
 
 ```
- browser ──► website (React/Vite :5173) ──┬─ /api  ──► website API (Node/Express :8000, mock-AI features)
+ browser ──► website (React/Vite :5173) ──┬─ /api  ──► website API (Node/Express :8000): legacy, no page calls it any more
                                           └─ /cg   ──► CrisisGrid API (FastAPI :8100)
                                                          ├─ /auth/*        accounts, sessions, API tokens   (the ONE login)
                                                          ├─ /papers /runs /gates /reports …   the pipeline
@@ -48,8 +48,10 @@ creates a single `.venv` with all three installed editable; `crisisgrid-api` dep
 
 ## Known limits of this integration
 
-* Two backends exist side by side: the Node mock-AI API (`/api`) serves the original dashboard pages; the FastAPI pipeline is
-  surfaced on the new Pipeline page. Migrating the old pages to the FastAPI is not done.
+* **Every dashboard page now talks to the FastAPI** (`/cg`): Papers, Paper Understanding, Artifacts, Claims, Audit, Reports, History,
+  Mission Control, Settings, plus Pipeline/Notebook/Account. The mock AI engine (`ai_mock.js`, `/api/ai/*`) was deleted. The Node API
+  still exists with its old papers/items/graph routes, but nothing in the website calls it (browser E2E asserts zero `/api` requests);
+  it can be retired. Experiment Lab, Graph and Version Comparison have no backend yet and say so instead of showing demo data.
 * `paper_env` needs POSIX (`fcntl`, `pty`); on Windows `/paper-env` is simply not mounted (the rest works).
 * Domain models are still separate (`core` vs `paper_env.domain`, uuid7 vs uuid4); reconciliation (their D-02/D-08) is open.
 * Not production-ready: no sandbox, no HTTPS/CSRF hardening beyond bearer tokens, no email flows (password reset), no

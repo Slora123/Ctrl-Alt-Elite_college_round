@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from crisisgrid_core.jobs import JobSpec
 from crisisgrid_core.models import as_utc
@@ -77,6 +77,11 @@ class SqlJobRepo(SqlRepository):
             res = s.execute(update(JobRow).where(JobRow.id == job_id, JobRow.status == "queued")
                             .values(status="assigned", worker_id=worker_id, assigned_at=when))
             return bool(res.rowcount == 1)  # type: ignore[attr-defined]
+
+    def delete_for_runs(self, run_ids: list[str]) -> None:
+        if run_ids:
+            with self._scope() as s:
+                s.execute(delete(JobRow).where(JobRow.run_id.in_(run_ids)))
 
     def save_job(self, j: Job) -> None:
         with self._scope() as s:

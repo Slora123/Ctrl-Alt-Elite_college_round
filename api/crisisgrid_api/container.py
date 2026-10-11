@@ -35,6 +35,7 @@ class AppContainer:
     jobs: JobService
     auth: AuthService
     auth_deps: AuthDeps
+    audit_log: SqlAuditLog | None = None  # the model-call log; erased per paper on delete
 
 
 def gateway_from_settings(settings: Settings, audit: SqlAuditLog) -> Gateway | None:
@@ -51,7 +52,8 @@ def build_container(engine: Engine, settings: Settings, *, gateway: Gateway | No
     events, papers, runs, gate_repo = SqlEventStore(factory), SqlPaperRepo(factory), SqlRunRepo(factory), SqlGateRepo(factory)
     gates = GateManager(gate_repo, events)
     jobs = JobService(SqlJobRepo(factory), events)
-    gateway = gateway or gateway_from_settings(settings, SqlAuditLog(factory))
+    audit_log = SqlAuditLog(factory)
+    gateway = gateway or gateway_from_settings(settings, audit_log)
     orch = None
     if gateway is not None:
         orch = Orchestrator(PipelineDeps(
@@ -60,4 +62,4 @@ def build_container(engine: Engine, settings: Settings, *, gateway: Gateway | No
         jobs.on_finished = lambda job: orch.on_job_finished(job.run_id)  # reaper / cancel path
     auth = AuthService(SqlAuthRepo(factory), settings, resolve_secret(settings) if settings.auth_enabled else "auth-disabled-placeholder")
     return AppContainer(papers=papers, runs=runs, gate_repo=gate_repo, events=events, gates=gates, orchestrator=orch, jobs=jobs,
-                        auth=auth, auth_deps=build_deps(auth, settings))
+                        auth=auth, auth_deps=build_deps(auth, settings), audit_log=audit_log)

@@ -7,7 +7,8 @@ from pdfgen import make_pdf
 
 from crisisgrid_api.config import Settings
 from crisisgrid_api.container import build_container
-from crisisgrid_api.db.base import make_engine
+from crisisgrid_api.db.base import make_engine, make_session_factory
+from crisisgrid_api.db.llm_audit import SqlAuditLog
 from crisisgrid_api.gateway.gateway import Gateway, Provider
 from crisisgrid_api.gateway.testing import ScriptedClient
 from crisisgrid_api.main import create_app
@@ -48,11 +49,12 @@ class Fetcher:
 class Stack:
     """An app + container on a database file. Build a second Stack on the same file to simulate a server restart."""
 
-    def __init__(self, db_url, *replies, fetcher=None, llm=True):
+    def __init__(self, db_url, *replies, fetcher=None, llm=True, sql_audit=False):
         self.script = ScriptedClient(*replies)
         engine = make_engine(db_url)
         settings = Settings(database_url=db_url)
-        gw = Gateway([Provider("fake", "fake-1", self.script)], sleep=lambda s: None) if llm else None
+        audit = SqlAuditLog(make_session_factory(engine)) if sql_audit else None  # None: the gateway keeps its in-memory log
+        gw = Gateway([Provider("fake", "fake-1", self.script)], audit=audit, sleep=lambda s: None) if llm else None
         self.container = build_container(engine, settings, gateway=gw, fetcher=fetcher or Fetcher())
         self.client = TestClient(create_app(settings, engine, self.container))
 

@@ -61,3 +61,10 @@ def test_staleness_tolerates_naive_datetimes_from_sqlite():
     naive = datetime(2026, 1, 1)
     aware = datetime(2026, 1, 1, 0, 2, tzinfo=timezone.utc)
     assert is_stale(naive, aware, timedelta(seconds=60))
+
+
+def test_a_job_without_a_python_requirement_runs_on_any_worker_interpreter():
+    # regression: jobs used to demand 3.12, so a worker on 3.13 (or 3.11) could never run anything
+    for version in ("3.11", "3.12", "3.13"):
+        assert match(JobRequirements(), Capabilities(python_versions=[version]))[0]
+    assert not match(JobRequirements(python="3.12"), Capabilities(python_versions=["3.13"]))[0]

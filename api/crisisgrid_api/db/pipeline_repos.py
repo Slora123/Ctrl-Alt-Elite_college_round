@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from ..orchestration.models import Gate, PaperRecord, RunState
 from .base import SqlRepository
@@ -8,7 +8,8 @@ from .tables import GateRow, PaperRow, PipelineRunRow
 
 
 def _paper(r: PaperRow) -> PaperRecord:
-    return PaperRecord(id=r.id, paper_hash=r.paper_hash, filename=r.filename, size=r.size, owner_id=r.owner_id, created_at=r.created_at)
+    return PaperRecord(id=r.id, paper_hash=r.paper_hash, filename=r.filename, size=r.size, owner_id=r.owner_id, pages=r.pages,
+                       created_at=r.created_at)
 
 
 class SqlPaperRepo(SqlRepository):
@@ -26,12 +27,24 @@ class SqlPaperRepo(SqlRepository):
             r = s.get(PaperRow, paper_id)
             return None if r is None else bytes(r.pdf)
 
+    def delete(self, paper_id: str) -> None:
+        with self._scope() as s:
+            s.execute(delete(PaperRow).where(PaperRow.id == paper_id))
+
     def list(self) -> list[PaperRecord]:
         with self._scope() as s:
             return [_paper(r) for r in s.scalars(select(PaperRow).order_by(PaperRow.id))]
 
 
 class SqlRunRepo(SqlRepository):
+    def delete_for_paper(self, paper_id: str) -> list[str]:
+        """Remove every run of a paper; returns their ids so dependent rows (gates, jobs, events) can go too."""
+        with self._scope() as s:
+            ids = [r for r in s.scalars(select(PipelineRunRow.run_id).where(PipelineRunRow.paper_id == paper_id))]
+            if ids:
+                s.execute(delete(PipelineRunRow).where(PipelineRunRow.run_id.in_(ids)))
+            return ids
+
     def save(self, state: RunState) -> None:
         data = state.model_dump(mode="json")
         with self._scope() as s:
@@ -56,6 +69,11 @@ class SqlRunRepo(SqlRepository):
 
 
 class SqlGateRepo(SqlRepository):
+    def delete_for_runs(self, run_ids: list[str]) -> None:
+        if run_ids:
+            with self._scope() as s:
+                s.execute(delete(GateRow).where(GateRow.run_id.in_(run_ids)))
+
     @staticmethod
     def _to_model(r: GateRow) -> Gate:
         return Gate(id=r.id, run_id=r.run_id, kind=r.kind, status=r.status, context=r.context,  # type: ignore[arg-type]
